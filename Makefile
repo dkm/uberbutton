@@ -20,6 +20,11 @@ CFLAGS += -DSPI_PORT=$(SPI_PORT)
 CFLAGS += -DCE_PIN=$(CE_PIN)
 CFLAGS += -DCS_PIN=$(CS_PIN)
 CFLAGS += -DIRQ_PIN=$(IRQ_PIN)
+
+CFLAGS += -DENABLE_NRF_COMM=1
+CFLAGS += -DENABLE_WS2812=1
+
+
 ##CFLAGS += -I$(HOME)/git/ubberFrame
 
 include $(RIOTBASE)/Makefile.include

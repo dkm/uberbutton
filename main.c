@@ -31,17 +31,20 @@
 #error "IRQ_PIN not defined"
 #endif
 
+#include "periph/spi.h"
+
+#ifdef ENABLE_NRF_COMM
 #include "nrf24l01p_settings.h"
+#include "nrf24l01p.h"
+#include "nrf24l01p_settings.h"
+#endif
 
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <board.h>
 #include <time.h>
-
-#include "nrf24l01p.h"
-#include "nrf24l01p_settings.h"
-#include "periph/spi.h"
+#include <string.h>
 #include "periph/gpio.h"
 #include "xtimer.h"
 #include "shell.h"
@@ -49,11 +52,18 @@
 #include "thread.h"
 #include "msg.h"
 
+
+#include "cpu.h"
+#include <periph/adc.h>
+#include "periph_conf.h"
+
+#include "lcd1602d.h"
 #include "uberframe.h"
 //#include "uberWrap.h"
 
 #define TEST_RX_MSG                1
 
+#ifdef ENABLE_NRF_COMM
 static int cmd_uber_setup(int argc, char **argv);
 static int cmd_send(int argc, char **argv);
 static int cmd_get_status(int argc, char **argv);
@@ -65,19 +75,34 @@ static int cmd_set_channel(int argc, char **argv);
 static int cmd_set_aa(int argc, char **argv);
 static int cmd_get_rf_setup(int argc, char **argv);
 static int cmd_set_dpl(int argc, char **argv);
+#endif
 
 void printbin(unsigned byte);
 void print_register(char reg, int num_bytes);
 
 static gpio_t led = GPIO_PIN(PORT_F, 1);
 
-static unsigned int sender_pid = KERNEL_PID_UNDEF;
+
+static unsigned int display_pid = KERNEL_PID_UNDEF;
+
+#ifdef ENABLE_NRF_COMM
 static nrf24l01p_t nrf24l01p_0;
+static unsigned int sender_pid = KERNEL_PID_UNDEF;
+#endif
+
+struct lcd_ctx lcd = {
+  .rs_pin = GPIO_PIN(PORT_E, 5),
+  .enable_pin = GPIO_PIN(PORT_E,4),
+  .data_pins = {GPIO_PIN(PORT_D,0),GPIO_PIN(PORT_D,1),GPIO_PIN(PORT_D,2),GPIO_PIN(PORT_D,3)},
+  .displayfunctions = (LCD_4BITMODE | LCD_1LINE | LCD_2LINE | LCD_5x8DOTS),
+  .numlines = 2,
+};
 
 /**
  * define some additional shell commands
  */
 static const shell_command_t shell_commands[] = {
+#ifdef ENABLE_NRF_COMM
     {"setaa", "set auto ack", cmd_set_aa },
     {"setchannel", "set channel", cmd_set_channel },
     {"status", "get status value", cmd_get_status },
@@ -89,8 +114,123 @@ static const shell_command_t shell_commands[] = {
     { "it", "init transceiver", cmd_its },
     { "send", "send 32 bytes data", cmd_send },
     { "ubersetup", "uber setup", cmd_uber_setup},
+#endif
     { NULL, NULL, NULL }
 };
+
+// ROTARY
+// No complete step yet.
+#define DIR_NONE 0x0
+// Clockwise step.
+#define DIR_CW 0x10
+// Anti-clockwise step.
+#define DIR_CCW 0x20
+
+#define R_START 0x0
+
+#ifdef HALF_STEP
+// Use the half-step state table (emits a code at 00 and 11)
+#define R_CCW_BEGIN 0x1    
+#define R_CW_BEGIN 0x2     
+#define R_START_M 0x3      
+#define R_CW_BEGIN_M 0x4    
+#define R_CCW_BEGIN_M 0x5
+const unsigned char ttable[6][4] = {
+  // R_START (00)
+  {R_START_M,            R_CW_BEGIN,     R_CCW_BEGIN,  R_START},
+  // R_CCW_BEGIN
+  {R_START_M | DIR_CCW, R_START,        R_CCW_BEGIN,  R_START},
+  // R_CW_BEGIN
+  {R_START_M | DIR_CW,  R_CW_BEGIN,     R_START,      R_START},
+  // R_START_M (11)
+  {R_START_M,            R_CCW_BEGIN_M,  R_CW_BEGIN_M, R_START},
+  // R_CW_BEGIN_M
+  {R_START_M,            R_START_M,      R_CW_BEGIN_M, R_START | DIR_CW},
+  // R_CCW_BEGIN_M
+  {R_START_M,            R_CCW_BEGIN_M,  R_START_M,    R_START | DIR_CCW},
+};
+#else
+// Use the full-step state table (emits a code at 00 only)
+#define R_CW_FINAL 0x1
+#define R_CW_BEGIN 0x2
+#define R_CW_NEXT 0x3
+#define R_CCW_BEGIN 0x4
+#define R_CCW_FINAL 0x5
+#define R_CCW_NEXT 0x6
+
+const unsigned char ttable[7][4] = {
+  // R_START
+  {R_START,    R_CW_BEGIN,  R_CCW_BEGIN, R_START},
+  // R_CW_FINAL
+  {R_CW_NEXT,  R_START,     R_CW_FINAL,  R_START | DIR_CW},
+  // R_CW_BEGIN
+  {R_CW_NEXT,  R_CW_BEGIN,  R_START,     R_START},
+  // R_CW_NEXT
+  {R_CW_NEXT,  R_CW_BEGIN,  R_CW_FINAL,  R_START},
+  // R_CCW_BEGIN
+  {R_CCW_NEXT, R_START,     R_CCW_BEGIN, R_START},
+  // R_CCW_FINAL
+  {R_CCW_NEXT, R_CCW_FINAL, R_START,     R_START | DIR_CCW},
+  // R_CCW_NEXT
+  {R_CCW_NEXT, R_CCW_FINAL, R_CCW_BEGIN, R_START},
+};
+#endif
+
+/* #define R_START 0x0 */
+/* #define R_CCW_BEGIN 0x1 */
+/* #define R_CW_BEGIN 0x2 */
+/* #define R_START_M 0x3 */
+/* #define R_CW_BEGIN_M 0x4 */
+/* #define R_CCW_BEGIN_M 0x5 */
+/* const unsigned char ttable[6][4] = { */
+/*   // R_START (00) */
+/*   {R_START_M,            R_CW_BEGIN,     R_CCW_BEGIN,  R_START}, */
+/*   // R_CCW_BEGIN */
+/*   {R_START_M | DIR_CCW, R_START,        R_CCW_BEGIN,  R_START}, */
+/*   // R_CW_BEGIN */
+/*   {R_START_M | DIR_CW,  R_CW_BEGIN,     R_START,      R_START}, */
+/*   // R_START_M (11) */
+/*   {R_START_M,            R_CCW_BEGIN_M,  R_CW_BEGIN_M, R_START}, */
+/*   // R_CW_BEGIN_M */
+/*   {R_START_M,            R_START_M,      R_CW_BEGIN_M, R_START | DIR_CW}, */
+/*   // R_CCW_BEGIN_M */
+/*   {R_START_M,            R_CCW_BEGIN_M,  R_START_M,    R_START | DIR_CCW}, */
+/* }; */
+
+unsigned int state = R_START;
+
+/* gpio_t b1 = GPIO_PIN(PORT_C, 7); */
+/* gpio_t b2 = GPIO_PIN(PORT_D, 6); */
+
+/* void rotary_cb(void *unused __attribute__((unused))) { */
+/*   unsigned int b1_v = gpio_read(b1) ? 1 : 0; */
+/*   unsigned int b2_v = gpio_read(b2) ? 1 : 0; */
+  
+/*   unsigned char pinstate = ( b1_v? 2 : 0) | (b2_v ? 1 : 0); */
+/*   /\* history[history_cnt] = pinstate; *\/ */
+/*   /\* history_cnt++; *\/ */
+  
+/*   /\* printf("state %d pinstate : %x,  b1 %d b2 %d\n", state, pinstate, b1_v, b2_v); *\/ */
+/*   state = ttable[state & 0xf][pinstate]; */
+
+/*   switch(state & 0x30){ */
+/*   case DIR_CCW: */
+/*     printf("CCW\n"); */
+/*     break; */
+/*   case DIR_CW: */
+/*     printf("CW\n"); */
+/*     break; */
+/*   case DIR_NONE: */
+/*     //    printf("noevent found\n"); */
+/*     break; */
+/*   default: */
+/*     // printf("none of the above ?! %d\n", state); */
+/*     break; */
+/*   } */
+/*   printf("boom\n"); */
+/* } */
+
+//END ROTARY
 
 void prtbin(unsigned byte)
 {
@@ -101,6 +241,8 @@ void prtbin(unsigned byte)
     puts("\n");
 }
 
+
+#ifdef ENABLE_NRF_COMM
 /**
  * @print register
  */
@@ -139,7 +281,14 @@ void print_register(char reg, int num_bytes)
         }
     }
 }
+#endif
 
+char display_handler_stack[THREAD_STACKSIZE_MAIN];
+
+static char dest_str[256] = {0};
+static int dest = 0;
+
+#ifdef ENABLE_NRF_COMM
 char tx_handler_stack[THREAD_STACKSIZE_MAIN];
 
 /* RX handler that waits for a message from the ISR */
@@ -152,11 +301,39 @@ void *nrf24l01p_tx_thread(void *arg){
 
     while (msg_receive(&m)) {
       printf("nrf24l01p_tx got a message\n");
+
+      //      lcd1602d_printstr(&lcd, 0, 1, dest_str);
+      lcd1602d_printstr(&lcd, 10, 1, "SEND...");
       cmd_send(4, (char**)m.content.ptr);
+      lcd1602d_printstr(&lcd, 10, 1, "IDLE   ");
     }
     return NULL;
 }
+#endif
 
+void *display_thread(void *arg){
+    msg_t msg_q[1];
+    msg_init_queue(msg_q, 1);
+
+    display_pid = thread_getpid();
+
+    msg_t m;
+
+    while (msg_receive(&m)) {
+      printf("display_thread got a message\n");
+      const char *name = uber_get_name(dest);
+      lcd1602d_printstr(&lcd, 0, 1, name);
+      int i;
+      for (i=strlen(name); i<10; i++){
+	lcd1602d_printstr(&lcd, i, 1, " ");
+      }
+    }
+
+    return NULL;
+}
+
+
+#ifdef ENABLE_NRF_COMM
 char rx_handler_stack[THREAD_STACKSIZE_MAIN];
 
 /* RX handler that waits for a message from the ISR */
@@ -201,6 +378,10 @@ void *nrf24l01p_rx_handler(void *arg)
 
                 /* puts(""); */
 		uber_dump_frame(&frame);
+		char buf[256] = {0};
+		uber_get_frame(&frame, buf);
+		printf("lcd rx:%p\n", &lcd);
+		lcd1602d_printstr(&lcd, 0, 0, buf);
                 break;
 
             default:
@@ -213,6 +394,7 @@ void *nrf24l01p_rx_handler(void *arg)
 
     return NULL;
 }
+
 
 /**
  * @init transceiver
@@ -346,6 +528,14 @@ int cmd_uber_setup(int argc, char **argv)
     if (thread_create(
         tx_handler_stack, sizeof(tx_handler_stack), THREAD_PRIORITY_MAIN - 1, 0,
         nrf24l01p_tx_thread, 0, "nrf24l01p_tx_thread") < 0) {
+        puts("Error in thread_create");
+        return 1;
+    }
+
+    /* create thread that display msg */
+    if (thread_create(
+        display_handler_stack, sizeof(display_handler_stack), THREAD_PRIORITY_MAIN - 1, 0,
+        display_thread, 0, "display_thread") < 0) {
         puts("Error in thread_create");
         return 1;
     }
@@ -619,22 +809,34 @@ int cmd_print_regs(int argc, char **argv)
 
     return 0;
 }
+#endif
 
-static int dest = 0;
 
 void test_cb(void * bid){
   int id = *(int*)bid;
   printf ("in cb %d\n", id);
-  static char dest_str[10] = {0};
+  //  static char dest_str[10] = {0};
   static char *argv[] = {"", "4", dest_str , "1"};
-
-  
+  (void)argv;
   switch (id){
   case 1:
-    dest = (dest +1) % 9;
+    dest = (dest +1 ) % 9;
+    if (!dest) {
+      // skip 0, it is invalid
+      dest = 1;
+    }
     printf("dest %d\n", dest != 8 ? dest : 0xFF);
-    sprintf(dest_str, "%d", dest != 8 ? dest : 0xFF);
+    printf("lcd cb:%p\n", &lcd);
+    //    lcd1602d_printstr(&lcd, 0, 1, dest_str);
+    if (display_pid != KERNEL_PID_UNDEF) {
+      msg_t m;
+      m.type = 0;
+      m.content.ptr = NULL;
+      msg_send_int(&m, display_pid);
+    }
+
     return;
+    
     break;
   case 2:
     break;
@@ -642,6 +844,10 @@ void test_cb(void * bid){
     return;
   }
 
+  sprintf(dest_str, "%d", dest != 8 ? dest : 0xFF);
+  dest_str[9] = 0;
+
+#ifdef SPI_NUMOF
   if (sender_pid != KERNEL_PID_UNDEF) {
     msg_t m;
     m.type = RCV_PKT_NRF24L01P;
@@ -649,29 +855,92 @@ void test_cb(void * bid){
     /* transmit more things here ? */
     msg_send_int(&m, sender_pid);
   }
-
+#endif
+  
   printf("exit cb\n");
   //cmd_send(4, argv);
 }
 
+#ifdef ADC_NUMOF
+static int res_ladder_val(adc_t adc, int channel){
+  int sample = adc_sample(adc, channel);
+  const int max_v = 4095;
+  int j;
+  int but_state = 0;
+
+  //  printf("%d\n", sample);
+  
+  for (j=1; j<=4; j++){
+    //      printf("[%d-%d > %d?", sample, max_v/(1<<j), -(max_v/(1<<(j+2))));
+    if (sample - max_v/(1<<j) > -max_v/(32) /* -(max_v/(1<<(j+2))) */ /* -4095/(j*(j+1)) */){
+	//	printf("%d Test ok /", j);
+    	sample -= max_v/(1<<j);
+    	but_state |= 1<<(j-1);
+      }
+  }
+  return but_state;
+}
+#endif
+
 int main(void)
 {
-    puts("Uber\n");
+  puts("Uber\n");
 
-    gpio_t b1 = GPIO_PIN(PORT_F, 4);
-    int b1_v = 1, b2_v = 2;
-    gpio_init_int(b1, GPIO_PULLUP, GPIO_FALLING, test_cb, &b1_v);
-    gpio_t b2 = GPIO_PIN(PORT_F, 0);
-    gpio_init_int(b2, GPIO_PULLUP, GPIO_FALLING, test_cb, &b2_v);
+#ifdef ADC_NUMOF
+  adc_init(ADC_0, 10);
+#endif
+  
+  lcd1602d_init_lcd(&lcd);
+  //  lcd1602d_setCursor(&lcd, 0,0);
+  printf("lcd:%p\n", &lcd);
+  /* lcd1602d_printstr(&lcd, 0,0,"Bojr"); */
+  /* lcd1602d_printstr(&lcd, 3,1,"Bloop"); */
 
-    gpio_init(led, GPIO_DIR_OUT, GPIO_NOPULL);
-    gpio_clear(led);
+  gpio_t b1 = GPIO_PIN(PORT_F, 4);
+  int b1_v = 1, b2_v = 2;
+  gpio_init_int(b1, GPIO_PULLUP, GPIO_FALLING, test_cb, &b1_v);
+  gpio_t b2 = GPIO_PIN(PORT_F, 0);
+  gpio_init_int(b2, GPIO_PULLUP, GPIO_FALLING, test_cb, &b2_v);
 
-    //char line_buf[SHELL_DEFAULT_BUFSIZE];
-    cmd_uber_setup(0, NULL);
-    //shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
-    while(1){
-      thread_yield(); 
+  gpio_init(led, GPIO_DIR_OUT, GPIO_NOPULL);
+  gpio_clear(led);
+
+  //char line_buf[SHELL_DEFAULT_BUFSIZE];
+#ifdef SPI_NUMOF
+  cmd_uber_setup(0, NULL);
+#endif
+    
+  //shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
+
+  /* gpio_init_int(b1, GPIO_PULLUP, GPIO_BOTH, rotary_cb, NULL); */
+  /* gpio_init(b2, GPIO_DIR_IN, GPIO_PULLUP); */
+
+#ifdef ADC_NUMOF
+  int button_state = res_ladder_val(ADC_0, 2);
+#endif
+    
+  while(1){
+#ifdef ADC_NUMOF
+    int new_button_state = res_ladder_val(ADC_0, 2);
+
+    if (new_button_state != button_state){
+      button_state = new_button_state;
+      printf("%d-%d-%d-%d\n", new_button_state & 0x8 ? 1 : 0,
+	     new_button_state & 0x4 ? 1 : 0,
+	     new_button_state & 0x2 ? 1 : 0,
+	     new_button_state & 0x1 ? 1 : 0);
+
+      dest = new_button_state;
+      if (display_pid != KERNEL_PID_UNDEF) {
+	msg_t m;
+	m.type = 0;
+	m.content.ptr = NULL;
+	msg_send_int(&m, display_pid);
+      }
     }
-    return 0;
+#endif
+    xtimer_usleep(10000);
+    thread_yield(); 
+  }
+  return 0;
 }
