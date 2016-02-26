@@ -1,25 +1,6 @@
-/*
- * Copyright (C) 2014 Hamburg University of Applied Sciences
- *
- * This file is subject to the terms and conditions of the GNU Lesser General
- * Public License v2.1. See the file LICENSE in the top level directory for more
- * details.
- */
-
-/**
- * @ingroup tests
- * @{
- *
- * @file
- * @brief       Test application for nrf24l01p lowlevel functions
- *
- * @author      Peter Kietzmann <peter.kietzmann@haw-hamburg.de>
- *
- * @}
- */
-
-#ifndef SPI_PORT
-#error "SPI_PORT not defined"
+#ifdef ENABLE_NRF_COMM
+#ifndef NRF_SPI_PORT
+#error "NRF_SPI_PORT not defined"
 #endif
 #ifndef CE_PIN
 #error "CE_PIN not defined"
@@ -33,10 +14,20 @@
 
 #include "periph/spi.h"
 
-#ifdef ENABLE_NRF_COMM
 #include "nrf24l01p_settings.h"
 #include "nrf24l01p.h"
 #include "nrf24l01p_settings.h"
+#endif /* ENABLE_NRF_COMM */
+
+#if ENABLE_SERVO
+#include "servo.h"
+#include "periph/pwm.h"
+static unsigned int current_pulse = 1000;
+static servo_t servo1;
+#endif
+
+#if ENABLE_MM5450
+#include "mm545x.h"
 #endif
 
 #include <stdio.h>
@@ -57,9 +48,23 @@
 #include <periph/adc.h>
 #include "periph_conf.h"
 
+#ifdef ENABLE_LCD
 #include "lcd1602d.h"
+#endif
+
 #include "uberframe.h"
 //#include "uberWrap.h"
+
+#if ENABLE_MM5450
+mm545x_t mm545p = {0};
+#endif
+
+
+
+
+#if ENABLE_WS2812
+#include "ws2812.h"
+#endif
 
 #define TEST_RX_MSG                1
 
@@ -80,8 +85,9 @@ static int cmd_set_dpl(int argc, char **argv);
 void printbin(unsigned byte);
 void print_register(char reg, int num_bytes);
 
+#ifdef ENABLE_SEND_LED
 static gpio_t led = GPIO_PIN(PORT_F, 1);
-
+#endif
 
 static unsigned int display_pid = KERNEL_PID_UNDEF;
 
@@ -90,6 +96,7 @@ static nrf24l01p_t nrf24l01p_0;
 static unsigned int sender_pid = KERNEL_PID_UNDEF;
 #endif
 
+#ifdef ENABLE_LCD
 struct lcd_ctx lcd = {
   .rs_pin = GPIO_PIN(PORT_E, 5),
   .enable_pin = GPIO_PIN(PORT_E,4),
@@ -97,6 +104,7 @@ struct lcd_ctx lcd = {
   .displayfunctions = (LCD_4BITMODE | LCD_1LINE | LCD_2LINE | LCD_5x8DOTS),
   .numlines = 2,
 };
+#endif
 
 /**
  * define some additional shell commands
@@ -119,6 +127,8 @@ static const shell_command_t shell_commands[] = {
 };
 
 // ROTARY
+#ifdef ENABLE_ROTARY
+
 // No complete step yet.
 #define DIR_NONE 0x0
 // Clockwise step.
@@ -127,6 +137,8 @@ static const shell_command_t shell_commands[] = {
 #define DIR_CCW 0x20
 
 #define R_START 0x0
+
+//#define HALF_STEP 1
 
 #ifdef HALF_STEP
 // Use the half-step state table (emits a code at 00 and 11)
@@ -199,38 +211,51 @@ const unsigned char ttable[7][4] = {
 
 unsigned int state = R_START;
 
-/* gpio_t b1 = GPIO_PIN(PORT_C, 7); */
-/* gpio_t b2 = GPIO_PIN(PORT_D, 6); */
+void rotary_cb(void *unused) {
+  unsigned int b1_v = gpio_read(ROTARY_PIN1) ? 1 : 0;
+  unsigned int b2_v = gpio_read(ROTARY_PIN2) ? 1 : 0;
 
-/* void rotary_cb(void *unused __attribute__((unused))) { */
-/*   unsigned int b1_v = gpio_read(b1) ? 1 : 0; */
-/*   unsigned int b2_v = gpio_read(b2) ? 1 : 0; */
+#if ENABLE_SERVO
+  int dir = 0;
+#endif
   
-/*   unsigned char pinstate = ( b1_v? 2 : 0) | (b2_v ? 1 : 0); */
-/*   /\* history[history_cnt] = pinstate; *\/ */
-/*   /\* history_cnt++; *\/ */
+  unsigned char pinstate = ( b1_v? 2 : 0) | (b2_v ? 1 : 0);
   
-/*   /\* printf("state %d pinstate : %x,  b1 %d b2 %d\n", state, pinstate, b1_v, b2_v); *\/ */
-/*   state = ttable[state & 0xf][pinstate]; */
+  /* printf("state %d pinstate : %x,  b1 %d b2 %d\n", state, pinstate, b1_v, b2_v); */
+  state = ttable[state & 0xf][pinstate];
 
-/*   switch(state & 0x30){ */
-/*   case DIR_CCW: */
-/*     printf("CCW\n"); */
-/*     break; */
-/*   case DIR_CW: */
-/*     printf("CW\n"); */
-/*     break; */
-/*   case DIR_NONE: */
-/*     //    printf("noevent found\n"); */
-/*     break; */
-/*   default: */
-/*     // printf("none of the above ?! %d\n", state); */
-/*     break; */
-/*   } */
-/*   printf("boom\n"); */
-/* } */
+  switch(state & 0x30){
+  case DIR_CCW:
+    printf("CCW\n");
+#if ENABLE_SERVO
+    dir=1;
+#endif
+    break;
 
-//END ROTARY
+  case DIR_CW:
+    printf("CW\n");
+#if ENABLE_SERVO
+    dir=-1;
+#endif
+    break;
+
+  case DIR_NONE:
+  default:
+    break;
+  }
+
+#if ENABLE_SERVO
+  if(dir){
+    current_pulse += (dir * 10);
+    printf("curr %d\n", current_pulse);
+    if (current_pulse >= 1000 && current_pulse <= 2000)
+      servo_set(&servo1, current_pulse);
+  }
+#endif
+
+}
+
+#endif /* ENABLE_ROTARY */
 
 void prtbin(unsigned byte)
 {
@@ -255,7 +280,7 @@ void print_register(char reg, int num_bytes)
 
     gpio_clear(CS_PIN);
     xtimer_usleep(1);
-    ret = spi_transfer_regs(SPI_PORT, (CMD_R_REGISTER | (REGISTER_MASK & reg)), 0, buf_return, num_bytes);
+    ret = spi_transfer_regs(NRF_SPI_PORT, (CMD_R_REGISTER | (REGISTER_MASK & reg)), 0, buf_return, num_bytes);
     gpio_set(CS_PIN);
 
     if (ret < 0) {
@@ -303,9 +328,13 @@ void *nrf24l01p_tx_thread(void *arg){
       printf("nrf24l01p_tx got a message\n");
 
       //      lcd1602d_printstr(&lcd, 0, 1, dest_str);
+#ifdef ENABLE_LCD
       lcd1602d_printstr(&lcd, 10, 1, "SEND...");
+#endif
       cmd_send(4, (char**)m.content.ptr);
+#ifdef ENABLE_LCD
       lcd1602d_printstr(&lcd, 10, 1, "IDLE   ");
+#endif
     }
     return NULL;
 }
@@ -321,6 +350,8 @@ void *display_thread(void *arg){
 
     while (msg_receive(&m)) {
       printf("display_thread got a message\n");
+
+#ifdef ENABLE_LCD
       const char *name = uber_get_name(dest);
       lcd1602d_printstr(&lcd, 0, 1, name);
       int i;
@@ -328,6 +359,7 @@ void *display_thread(void *arg){
 	lcd1602d_printstr(&lcd, i, 1, " ");
       }
     }
+#endif
 
     return NULL;
 }
@@ -380,8 +412,11 @@ void *nrf24l01p_rx_handler(void *arg)
 		uber_dump_frame(&frame);
 		char buf[256] = {0};
 		uber_get_frame(&frame, buf);
+
+#ifdef ENABLE_LCD
 		printf("lcd rx:%p\n", &lcd);
 		lcd1602d_printstr(&lcd, 0, 0, buf);
+#endif
                 break;
 
             default:
@@ -407,7 +442,7 @@ int cmd_its(int argc, char **argv)
     puts("Init Transceiver\n");
 
     /* initialize transceiver device */
-    if (nrf24l01p_init(&nrf24l01p_0, SPI_PORT, CE_PIN, CS_PIN, IRQ_PIN) < 0) {
+    if (nrf24l01p_init(&nrf24l01p_0, NRF_SPI_PORT, CE_PIN, CS_PIN, IRQ_PIN) < 0) {
         puts("Error in nrf24l01p_init");
         return 1;
     }
@@ -435,7 +470,7 @@ int cmd_get_config(int argc, char **argv)
 
     gpio_clear(CS_PIN);
     xtimer_usleep(1);
-    ret = spi_transfer_regs(SPI_PORT, (CMD_R_REGISTER | (REGISTER_MASK & REG_CONFIG)), 0, (char*)&buf_return, 1);
+    ret = spi_transfer_regs(NRF_SPI_PORT, (CMD_R_REGISTER | (REGISTER_MASK & REG_CONFIG)), 0, (char*)&buf_return, 1);
     gpio_set(CS_PIN);
     if (ret < 0) {
         printf("Error in read access\n");
@@ -482,7 +517,7 @@ int cmd_uber_setup(int argc, char **argv)
     printf("IRQ : pin %d: port %d\n", (unsigned int)(IRQ_PIN&0x0f), (unsigned int)(IRQ_PIN>>4));
 
     /* initialize transceiver device */
-    if (nrf24l01p_init(&nrf24l01p_0, SPI_PORT, CE_PIN, CS_PIN, IRQ_PIN) < 0) {
+    if (nrf24l01p_init(&nrf24l01p_0, NRF_SPI_PORT, CE_PIN, CS_PIN, IRQ_PIN) < 0) {
         puts("Error in nrf24l01p_init");
         return 1;
     }
@@ -559,7 +594,9 @@ int cmd_uber_setup(int argc, char **argv)
  */
 int cmd_send(int argc, char **argv)
 {
+#ifdef ENABLE_SEND_LED
     gpio_set(led);
+#endif
     puts("Send");
 
     int status = 0;
@@ -625,7 +662,9 @@ int cmd_send(int argc, char **argv)
         puts("Error in nrf24l01p_set_rxmode");
         return 1;
     }
+#ifdef ENABLE_SEND_LED
     gpio_clear(led);
+#endif
     return 0;
 }
 
@@ -826,6 +865,8 @@ void test_cb(void * bid){
       dest = 1;
     }
     printf("dest %d\n", dest != 8 ? dest : 0xFF);
+
+#ifdef ENABLE_LCD
     printf("lcd cb:%p\n", &lcd);
     //    lcd1602d_printstr(&lcd, 0, 1, dest_str);
     if (display_pid != KERNEL_PID_UNDEF) {
@@ -834,7 +875,8 @@ void test_cb(void * bid){
       m.content.ptr = NULL;
       msg_send_int(&m, display_pid);
     }
-
+#endif
+    
     return;
     
     break;
@@ -847,7 +889,7 @@ void test_cb(void * bid){
   sprintf(dest_str, "%d", dest != 8 ? dest : 0xFF);
   dest_str[9] = 0;
 
-#ifdef SPI_NUMOF
+#ifdef ENABLE_NRF_COMM
   if (sender_pid != KERNEL_PID_UNDEF) {
     msg_t m;
     m.type = RCV_PKT_NRF24L01P;
@@ -861,7 +903,7 @@ void test_cb(void * bid){
   //cmd_send(4, argv);
 }
 
-#ifdef ADC_NUMOF
+#ifdef ENABLE_RES_LADDER
 static int res_ladder_val(adc_t adc, int channel){
   int sample = adc_sample(adc, channel);
   const int max_v = 4095;
@@ -886,42 +928,159 @@ int main(void)
 {
   puts("Uber\n");
 
-#ifdef ADC_NUMOF
-  adc_init(ADC_0, 10);
+#if ENABLE_SERVO
+  int r = servo_init(&servo1, SERVO_PWM, 0, 1000, 2000);
+  printf("servo init : %d\n", r);
 #endif
+
+#if ENABLE_MM5450
+  mm545x_init(&mm545p, MM5450_CLK, MM5450_DIN);
+  uint8_t sev1[8] = {0,1,2,3,4,5,6,7};
+  uint8_t sev2[8] = {8,9,10,11,12,13,14,15};
+
+  /* mm545x_setupSegment(&mm545p, 0, sev1); */
+  /* mm545x_setupSegment(&mm545p, 1, sev2); */
+  /* mm545x_setSegment(&mm545p, 0, '8'); */
+  mm545x_setLeds(&mm545p, 0xffffffffffffffff);
+  //  mm545x_refreshSegments(&mm545p);
+  /* gpio_init(GPIO_PIN(PORT_C,5), GPIO_DIR_OUT, GPIO_NOPULL); */
+  /* gpio_set(GPIO_PIN(PORT_C,5)); */
+#endif
+
+
+#if ENABLE_WS2812
+
+#define MAX_PIX_VAL 255
+  ws2812_rgb_t led_array[] = {
+    OFF, 
+    {.r=0xff, .g=0, .b=0},
+    {.r=0x0, .g=0xff, .b=0},
+    {.r=0x0, .g=0, .b=0xff},
+    {.r=0xff, .g=0xff, .b=0},
+    {.r=0xff, .g=0xff, .b=0xff},
+    {.r=0xff, .g=0, .b=0},
+    {.r=0xff, .g=0xff, .b=0},
+
+    /* RED, GREEN, BLUE, */
+    /* RED, GREEN, BLUE, */
+    /* RED, GREEN */
+  };
+  static char big_buffer[sizeof(led_array)*4] = {0};
+  ws2812_rgb_t kit_leds [8] = {{0}};
+  int kit_eye = 3;
   
+  ws2812_t ws2812p;
+  ws2812_init(&ws2812p, WS2812_SPI_PORT );
+
+#endif /* ENABLE_WS2812 */
+
+  
+#ifdef ENABLE_LCD
   lcd1602d_init_lcd(&lcd);
   //  lcd1602d_setCursor(&lcd, 0,0);
   printf("lcd:%p\n", &lcd);
+  lcd1602d_printstr(&lcd, 0, 0, "STARTING");
+#endif
+  
   /* lcd1602d_printstr(&lcd, 0,0,"Bojr"); */
   /* lcd1602d_printstr(&lcd, 3,1,"Bloop"); */
 
+#if ENABLE_BOARD_SWITCH
   gpio_t b1 = GPIO_PIN(PORT_F, 4);
   int b1_v = 1, b2_v = 2;
   gpio_init_int(b1, GPIO_PULLUP, GPIO_FALLING, test_cb, &b1_v);
   gpio_t b2 = GPIO_PIN(PORT_F, 0);
   gpio_init_int(b2, GPIO_PULLUP, GPIO_FALLING, test_cb, &b2_v);
+#endif
 
+#if ENABLE_ROTARY_BUTTON
+  gpio_t rot_pin = ROTARY_BUTTON_PIN;
+  int rot_but_arg = 1;
+  gpio_init_int(rot_pin, GPIO_PULLUP, GPIO_BOTH, test_cb, &rot_but_arg);
+#endif
+
+#ifdef ENABLE_SEND_LED
   gpio_init(led, GPIO_DIR_OUT, GPIO_NOPULL);
   gpio_clear(led);
+#endif
 
   //char line_buf[SHELL_DEFAULT_BUFSIZE];
-#ifdef SPI_NUMOF
+#ifdef ENABLE_NRF_COMM
   cmd_uber_setup(0, NULL);
 #endif
     
   //shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
-
-  /* gpio_init_int(b1, GPIO_PULLUP, GPIO_BOTH, rotary_cb, NULL); */
-  /* gpio_init(b2, GPIO_DIR_IN, GPIO_PULLUP); */
-
-#ifdef ADC_NUMOF
-  int button_state = res_ladder_val(ADC_0, 2);
+#ifdef ENABLE_ROTARY
+  gpio_init_int(ROTARY_PIN1, GPIO_PULLUP, GPIO_BOTH, rotary_cb, NULL);
+  gpio_init_int(ROTARY_PIN2, GPIO_PULLUP, GPIO_BOTH, rotary_cb, NULL); //GPIO_DIR_IN, GPIO_PULLUP);
 #endif
-    
+
+
+#ifdef ENABLE_RES_LADDER
+  adc_init(RES_LADDER_ADC, 10);
+  int button_state = res_ladder_val(RES_LADDER_ADC, RES_LADDER_CHAN);
+#endif
+
+
+  // endless loop start
+  int loop_count=0;
   while(1){
-#ifdef ADC_NUMOF
-    int new_button_state = res_ladder_val(ADC_0, 2);
+    loop_count++;
+#if ENABLE_WS2812
+    {
+      int i;
+      int pos = abs(kit_eye)-1;
+
+      for (i=0; i<8; i++){
+	kit_leds[i].r = 255 / (1 << abs(i-pos)) ;
+      }
+      ws2812_write_rgb(&ws2812p, kit_leds, sizeof(kit_leds)/sizeof(ws2812_rgb_t), big_buffer);
+
+      kit_eye++;
+      if (kit_eye == 9){
+	kit_eye = -8;
+      } else if (kit_eye == -9){
+	kit_eye = 8;
+      } else if (kit_eye == 0){
+	kit_eye++;
+      }
+    }
+  
+#endif
+
+#if ENABLE_WS2812 && 0
+    ws2812_write_rgb(&ws2812p, led_array, sizeof(led_array)/sizeof(ws2812_rgb_t), big_buffer);
+    //    ws2812_write(&ws2812p, led_array_2, sizeof(led_array_2));
+    int idx;
+    for (idx=0; idx < sizeof(led_array)/sizeof(ws2812_rgb_t)-1; idx++){
+      ws2812_rgb_t *cur = &led_array[idx];
+      if (cur->r == 0xff && cur->g==0xff && cur->b ){
+	cur->b--;
+      } else if (cur->r==0xff && cur->g  && !cur->b){
+	cur->g--;
+      } else if (cur->r && !cur->g && !cur->b){
+	cur->r--;
+      } else if(!cur->r && !cur->g && cur->b != 0xff){
+	cur->b++;
+      } else if(!cur->r && cur->g != 0xff && cur->b == 0xff){
+	cur->g++;
+      } else if (cur->r!=0xff && cur->g==0xff && cur->b == 0xff){
+	cur->r++;
+      }
+      // printf("%x %x %x\n", cur->r, cur->g, cur->b);
+    }
+    // rotate stuff
+    if (loop_count % 1000000){
+      ws2812_rgb_t tmp = led_array[sizeof(led_array)/sizeof(ws2812_rgb_t)-1];
+      for (idx=sizeof(led_array)/sizeof(ws2812_rgb_t)-1; idx > 0; idx--){
+	led_array[idx] = led_array[idx-1];
+      }
+      led_array[0] = tmp;
+    }
+#endif
+
+#ifdef ENABLE_RES_LADDER
+    int new_button_state = res_ladder_val(RES_LADDER_ADC, RES_LADDER_CHAN);
 
     if (new_button_state != button_state){
       button_state = new_button_state;
@@ -939,7 +1098,8 @@ int main(void)
       }
     }
 #endif
-    xtimer_usleep(10000);
+    xtimer_usleep(100000/2);
+    //    printf("tick\n");
     thread_yield(); 
   }
   return 0;
