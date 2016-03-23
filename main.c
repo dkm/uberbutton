@@ -24,6 +24,7 @@
 #include "periph/pwm.h"
 static unsigned int current_pulse = 1000;
 static servo_t servo1;
+#define MS_TO_SERVO(x) (((unsigned long long)(x) * SERVO_RESOLUTION * SERVO_FREQUENCY)/SEC_IN_USEC)
 #endif
 
 #if ENABLE_MM5450
@@ -43,7 +44,6 @@ static servo_t servo1;
 #include "thread.h"
 #include "msg.h"
 
-
 #include "cpu.h"
 #include <periph/adc.h>
 #include "periph_conf.h"
@@ -58,8 +58,6 @@ static servo_t servo1;
 #if ENABLE_MM5450
 mm545x_t mm545p = {0};
 #endif
-
-
 
 
 #if ENABLE_WS2812
@@ -129,6 +127,9 @@ static const shell_command_t shell_commands[] = {
 // ROTARY
 #ifdef ENABLE_ROTARY
 
+#include "rotary.h"
+
+#if 0
 // No complete step yet.
 #define DIR_NONE 0x0
 // Clockwise step.
@@ -209,6 +210,8 @@ const unsigned char ttable[7][4] = {
 /*   {R_START_M,            R_CCW_BEGIN_M,  R_START_M,    R_START | DIR_CCW}, */
 /* }; */
 
+#endif /* 0 */
+
 unsigned int state = R_START;
 
 void rotary_cb(void *unused) {
@@ -248,8 +251,12 @@ void rotary_cb(void *unused) {
   if(dir){
     current_pulse += (dir * 10);
     printf("curr %d\n", current_pulse);
-    if (current_pulse >= 1000 && current_pulse <= 2000)
-      servo_set(&servo1, current_pulse);
+    if (current_pulse >= 1000 && current_pulse <= 2000){
+      // scale back servo value in our range
+      unsigned long long tmp = MS_TO_SERVO(current_pulse);
+      printf("Scaled : %lx\n", (unsigned long)tmp);
+      servo_set(&servo1, tmp);
+  }
   }
 #endif
 
@@ -360,10 +367,95 @@ void *display_thread(void *arg){
       }
     }
 #endif
-
     return NULL;
 }
 
+
+#if ENABLE_WS2812
+static unsigned int ws2812_pid = KERNEL_PID_UNDEF;
+char ws2812_thread_stack[THREAD_STACKSIZE_MAIN];
+
+#define WS2812_BUTTON_STATE  0
+#define WS2812_NEW_RFMSG  1
+
+ws2812_rgb_t kit_leds [8] = {{0}};
+static char big_buffer[sizeof(kit_leds)*4] = {0};
+
+int kit_eye = 3;
+
+void *ws2812_thread(void *arg){
+  msg_t msg_q[1];
+  int ws2812_loop_period = 1000000;
+
+  ws2812_t ws2812p;
+  ws2812_init(&ws2812p, WS2812_SPI_PORT );
+
+  msg_init_queue(msg_q, 1);
+
+  ws2812_pid = thread_getpid();
+  msg_t m;
+
+  int current_button_state = 0;
+  int pending_msg = 0;
+  
+  while(1){
+    int i;
+
+    if (msg_try_receive(&m) == 1){
+      switch(m.type){
+      case WS2812_BUTTON_STATE:
+	if (pending_msg){
+	  current_button_state = m.content.value;
+	  memset(kit_leds, 0, sizeof(kit_leds));
+	  ws2812_loop_period *= 10;
+	  pending_msg = 0;
+	}
+	break;
+      case WS2812_NEW_RFMSG:
+	if (! pending_msg){
+	  pending_msg = 1;
+	  ws2812_loop_period /= 10;
+	}
+      default:
+	break;
+      }
+    }
+
+    if (pending_msg){
+      int pos = abs(kit_eye)-1;
+      for (i=0; i<4; i++){
+	kit_leds[i].b = (i == (pos %4))? 255 : 60;
+      	kit_leds[7-i].r = (i == (pos %4))? 255 : 60 ;
+      }
+      
+    } else {
+      int pos = abs(kit_eye)-1;
+
+      for (i=0; i<8; i++){
+	kit_leds[i].b = 255 / (1 << abs(i-pos)) ;
+      }
+    }
+    ws2812_write_rgb(&ws2812p, kit_leds, sizeof(kit_leds)/sizeof(ws2812_rgb_t), big_buffer);
+
+    kit_eye++;
+    if (kit_eye == 9){
+      kit_eye = -8;
+    } else if (kit_eye == -9){
+      kit_eye = 8;
+    } else if (kit_eye == 0){
+      kit_eye++;
+    }
+    xtimer_usleep(ws2812_loop_period);
+  }
+
+  /* while (msg_receive(&m)) { */
+  /*   printf("ws2812_thread got a message\n"); */
+
+  /* } */
+
+  return NULL;
+}
+#endif /* ENABLE_WS2812 */
 
 #ifdef ENABLE_NRF_COMM
 char rx_handler_stack[THREAD_STACKSIZE_MAIN];
@@ -416,6 +508,13 @@ void *nrf24l01p_rx_handler(void *arg)
 #ifdef ENABLE_LCD
 		printf("lcd rx:%p\n", &lcd);
 		lcd1602d_printstr(&lcd, 0, 0, buf);
+
+		if (ws2812_pid != KERNEL_PID_UNDEF) {
+		  msg_t m;
+		  m.type = WS2812_NEW_RFMSG;
+		  m.content.ptr = (char*)&frame;
+		  msg_send_int(&m, ws2812_pid);
+		}
 #endif
                 break;
 
@@ -929,7 +1028,7 @@ int main(void)
   puts("Uber\n");
 
 #if ENABLE_SERVO
-  int r = servo_init(&servo1, SERVO_PWM, 0, 1000, 2000);
+  int r = servo_init(&servo1, SERVO_PWM, 0, MS_TO_SERVO(1000), MS_TO_SERVO(2000));
   printf("servo init : %d\n", r);
 #endif
 
@@ -948,31 +1047,6 @@ int main(void)
 #endif
 
 
-#if ENABLE_WS2812
-
-#define MAX_PIX_VAL 255
-  ws2812_rgb_t led_array[] = {
-    OFF, 
-    {.r=0xff, .g=0, .b=0},
-    {.r=0x0, .g=0xff, .b=0},
-    {.r=0x0, .g=0, .b=0xff},
-    {.r=0xff, .g=0xff, .b=0},
-    {.r=0xff, .g=0xff, .b=0xff},
-    {.r=0xff, .g=0, .b=0},
-    {.r=0xff, .g=0xff, .b=0},
-
-    /* RED, GREEN, BLUE, */
-    /* RED, GREEN, BLUE, */
-    /* RED, GREEN */
-  };
-  static char big_buffer[sizeof(led_array)*4] = {0};
-  ws2812_rgb_t kit_leds [8] = {{0}};
-  int kit_eye = 3;
-  
-  ws2812_t ws2812p;
-  ws2812_init(&ws2812p, WS2812_SPI_PORT );
-
-#endif /* ENABLE_WS2812 */
 
   
 #ifdef ENABLE_LCD
@@ -1021,12 +1095,20 @@ int main(void)
   int button_state = res_ladder_val(RES_LADDER_ADC, RES_LADDER_CHAN);
 #endif
 
+#if ENABLE_WS2812
+  if (thread_create(
+        ws2812_thread_stack, sizeof(ws2812_thread_stack), THREAD_PRIORITY_MAIN - 1, 0,
+        ws2812_thread, 0, "ws2812_thread") < 0) {
+        puts("Error in thread_create");
+        return 1;
+    }
+#endif
 
   // endless loop start
   int loop_count=0;
   while(1){
     loop_count++;
-#if ENABLE_WS2812
+#if ENABLE_WS2812 && 0
     {
       int i;
       int pos = abs(kit_eye)-1;
@@ -1083,19 +1165,30 @@ int main(void)
     int new_button_state = res_ladder_val(RES_LADDER_ADC, RES_LADDER_CHAN);
 
     if (new_button_state != button_state){
-      button_state = new_button_state;
       printf("%d-%d-%d-%d\n", new_button_state & 0x8 ? 1 : 0,
 	     new_button_state & 0x4 ? 1 : 0,
 	     new_button_state & 0x2 ? 1 : 0,
 	     new_button_state & 0x1 ? 1 : 0);
 
-      dest = new_button_state;
-      if (display_pid != KERNEL_PID_UNDEF) {
+      dest = new_button_state & 0x7; // only 3bits
+
+      if ((new_button_state & 0x7) != (button_state & 0x7) &&
+	  display_pid != KERNEL_PID_UNDEF) {
 	msg_t m;
 	m.type = 0;
 	m.content.ptr = NULL;
 	msg_send_int(&m, display_pid);
       }
+
+      if ((new_button_state & 0x8) != (button_state & 0x8) &&
+	  ws2812_pid != KERNEL_PID_UNDEF) {
+	msg_t m;
+	m.type = WS2812_BUTTON_STATE;
+	m.content.value = new_button_state & 0x8;
+	msg_send_int(&m, ws2812_pid);
+      }
+
+      button_state = new_button_state;
     }
 #endif
     xtimer_usleep(100000/2);
