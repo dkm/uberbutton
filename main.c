@@ -129,71 +129,24 @@ static const shell_command_t shell_commands[] = {
 
 #include "rotary.h"
 
-#if 0
-// No complete step yet.
-#define DIR_NONE 0x0
-// Clockwise step.
-#define DIR_CW 0x10
-// Anti-clockwise step.
-#define DIR_CCW 0x20
-
-#define R_START 0x0
-
-//#define HALF_STEP 1
-
-#ifdef HALF_STEP
-// Use the half-step state table (emits a code at 00 and 11)
-#define R_CCW_BEGIN 0x1    
-#define R_CW_BEGIN 0x2     
-#define R_START_M 0x3      
-#define R_CW_BEGIN_M 0x4    
-#define R_CCW_BEGIN_M 0x5
-const unsigned char ttable[6][4] = {
-  // R_START (00)
-  {R_START_M,            R_CW_BEGIN,     R_CCW_BEGIN,  R_START},
-  // R_CCW_BEGIN
-  {R_START_M | DIR_CCW, R_START,        R_CCW_BEGIN,  R_START},
-  // R_CW_BEGIN
-  {R_START_M | DIR_CW,  R_CW_BEGIN,     R_START,      R_START},
-  // R_START_M (11)
-  {R_START_M,            R_CCW_BEGIN_M,  R_CW_BEGIN_M, R_START},
-  // R_CW_BEGIN_M
-  {R_START_M,            R_START_M,      R_CW_BEGIN_M, R_START | DIR_CW},
-  // R_CCW_BEGIN_M
-  {R_START_M,            R_CCW_BEGIN_M,  R_START_M,    R_START | DIR_CCW},
-};
-#else
-// Use the full-step state table (emits a code at 00 only)
-#define R_CW_FINAL 0x1
-#define R_CW_BEGIN 0x2
-#define R_CW_NEXT 0x3
-#define R_CCW_BEGIN 0x4
-#define R_CCW_FINAL 0x5
-#define R_CCW_NEXT 0x6
-
-const unsigned char ttable[7][4] = {
-  // R_START
-  {R_START,    R_CW_BEGIN,  R_CCW_BEGIN, R_START},
-  // R_CW_FINAL
-  {R_CW_NEXT,  R_START,     R_CW_FINAL,  R_START | DIR_CW},
-  // R_CW_BEGIN
-  {R_CW_NEXT,  R_CW_BEGIN,  R_START,     R_START},
-  // R_CW_NEXT
-  {R_CW_NEXT,  R_CW_BEGIN,  R_CW_FINAL,  R_START},
-  // R_CCW_BEGIN
-  {R_CCW_NEXT, R_START,     R_CCW_BEGIN, R_START},
-  // R_CCW_FINAL
-  {R_CCW_NEXT, R_CCW_FINAL, R_START,     R_START | DIR_CCW},
-  // R_CCW_NEXT
-  {R_CCW_NEXT, R_CCW_FINAL, R_CCW_BEGIN, R_START},
-};
-#endif
+/* #if 0 */
+/* // No complete step yet. */
+/* #define DIR_NONE 0x0 */
+/* // Clockwise step. */
+/* #define DIR_CW 0x10 */
+/* // Anti-clockwise step. */
+/* #define DIR_CCW 0x20 */
 
 /* #define R_START 0x0 */
-/* #define R_CCW_BEGIN 0x1 */
-/* #define R_CW_BEGIN 0x2 */
-/* #define R_START_M 0x3 */
-/* #define R_CW_BEGIN_M 0x4 */
+
+/* //#define HALF_STEP 1 */
+
+/* #ifdef HALF_STEP */
+/* // Use the half-step state table (emits a code at 00 and 11) */
+/* #define R_CCW_BEGIN 0x1     */
+/* #define R_CW_BEGIN 0x2      */
+/* #define R_START_M 0x3       */
+/* #define R_CW_BEGIN_M 0x4     */
 /* #define R_CCW_BEGIN_M 0x5 */
 /* const unsigned char ttable[6][4] = { */
 /*   // R_START (00) */
@@ -209,58 +162,107 @@ const unsigned char ttable[7][4] = {
 /*   // R_CCW_BEGIN_M */
 /*   {R_START_M,            R_CCW_BEGIN_M,  R_START_M,    R_START | DIR_CCW}, */
 /* }; */
+/* #else */
+/* // Use the full-step state table (emits a code at 00 only) */
+/* #define R_CW_FINAL 0x1 */
+/* #define R_CW_BEGIN 0x2 */
+/* #define R_CW_NEXT 0x3 */
+/* #define R_CCW_BEGIN 0x4 */
+/* #define R_CCW_FINAL 0x5 */
+/* #define R_CCW_NEXT 0x6 */
 
-#endif /* 0 */
+/* const unsigned char ttable[7][4] = { */
+/*   // R_START */
+/*   {R_START,    R_CW_BEGIN,  R_CCW_BEGIN, R_START}, */
+/*   // R_CW_FINAL */
+/*   {R_CW_NEXT,  R_START,     R_CW_FINAL,  R_START | DIR_CW}, */
+/*   // R_CW_BEGIN */
+/*   {R_CW_NEXT,  R_CW_BEGIN,  R_START,     R_START}, */
+/*   // R_CW_NEXT */
+/*   {R_CW_NEXT,  R_CW_BEGIN,  R_CW_FINAL,  R_START}, */
+/*   // R_CCW_BEGIN */
+/*   {R_CCW_NEXT, R_START,     R_CCW_BEGIN, R_START}, */
+/*   // R_CCW_FINAL */
+/*   {R_CCW_NEXT, R_CCW_FINAL, R_START,     R_START | DIR_CCW}, */
+/*   // R_CCW_NEXT */
+/*   {R_CCW_NEXT, R_CCW_FINAL, R_CCW_BEGIN, R_START}, */
+/* }; */
+/* #endif */
 
-unsigned int state = R_START;
+/* /\* #define R_START 0x0 *\/ */
+/* /\* #define R_CCW_BEGIN 0x1 *\/ */
+/* /\* #define R_CW_BEGIN 0x2 *\/ */
+/* /\* #define R_START_M 0x3 *\/ */
+/* /\* #define R_CW_BEGIN_M 0x4 *\/ */
+/* /\* #define R_CCW_BEGIN_M 0x5 *\/ */
+/* /\* const unsigned char ttable[6][4] = { *\/ */
+/* /\*   // R_START (00) *\/ */
+/* /\*   {R_START_M,            R_CW_BEGIN,     R_CCW_BEGIN,  R_START}, *\/ */
+/* /\*   // R_CCW_BEGIN *\/ */
+/* /\*   {R_START_M | DIR_CCW, R_START,        R_CCW_BEGIN,  R_START}, *\/ */
+/* /\*   // R_CW_BEGIN *\/ */
+/* /\*   {R_START_M | DIR_CW,  R_CW_BEGIN,     R_START,      R_START}, *\/ */
+/* /\*   // R_START_M (11) *\/ */
+/* /\*   {R_START_M,            R_CCW_BEGIN_M,  R_CW_BEGIN_M, R_START}, *\/ */
+/* /\*   // R_CW_BEGIN_M *\/ */
+/* /\*   {R_START_M,            R_START_M,      R_CW_BEGIN_M, R_START | DIR_CW}, *\/ */
+/* /\*   // R_CCW_BEGIN_M *\/ */
+/* /\*   {R_START_M,            R_CCW_BEGIN_M,  R_START_M,    R_START | DIR_CCW}, *\/ */
+/* /\* }; *\/ */
+
+/* #endif /\* 0 *\/ */
+
+/* unsigned int state = R_START; */
 
 void rotary_cb(void *unused) {
-  unsigned int b1_v = gpio_read(ROTARY_PIN1) ? 1 : 0;
-  unsigned int b2_v = gpio_read(ROTARY_PIN2) ? 1 : 0;
-
-#if ENABLE_SERVO
-  int dir = 0;
-#endif
-  
-  unsigned char pinstate = ( b1_v? 2 : 0) | (b2_v ? 1 : 0);
-  
-  /* printf("state %d pinstate : %x,  b1 %d b2 %d\n", state, pinstate, b1_v, b2_v); */
-  state = ttable[state & 0xf][pinstate];
-
-  switch(state & 0x30){
-  case DIR_CCW:
-    printf("CCW\n");
-#if ENABLE_SERVO
-    dir=1;
-#endif
-    break;
-
-  case DIR_CW:
-    printf("CW\n");
-#if ENABLE_SERVO
-    dir=-1;
-#endif
-    break;
-
-  case DIR_NONE:
-  default:
-    break;
-  }
-
-#if ENABLE_SERVO
-  if(dir){
-    current_pulse += (dir * 10);
-    printf("curr %d\n", current_pulse);
-    if (current_pulse >= 1000 && current_pulse <= 2000){
-      // scale back servo value in our range
-      unsigned long long tmp = MS_TO_SERVO(current_pulse);
-      printf("Scaled : %lx\n", (unsigned long)tmp);
-      servo_set(&servo1, tmp);
-  }
-  }
-#endif
 
 }
+/* unsigned int b1_v = gpio_read(ROTARY_PIN1) ? 1 : 0; */
+/*   unsigned int b2_v = gpio_read(ROTARY_PIN2) ? 1 : 0; */
+
+/* #if ENABLE_SERVO */
+/*   int dir = 0; */
+/* #endif */
+  
+/*   unsigned char pinstate = ( b1_v? 2 : 0) | (b2_v ? 1 : 0); */
+  
+/*   /\* printf("state %d pinstate : %x,  b1 %d b2 %d\n", state, pinstate, b1_v, b2_v); *\/ */
+/*   state = ttable[state & 0xf][pinstate]; */
+
+/*   switch(state & 0x30){ */
+/*   case DIR_CCW: */
+/*     printf("CCW\n"); */
+/* #if ENABLE_SERVO */
+/*     dir=1; */
+/* #endif */
+/*     break; */
+
+/*   case DIR_CW: */
+/*     printf("CW\n"); */
+/* #if ENABLE_SERVO */
+/*     dir=-1; */
+/* #endif */
+/*     break; */
+
+/*   case DIR_NONE: */
+/*   default: */
+/*     break; */
+/*   } */
+
+/* #if ENABLE_SERVO */
+/*   if(dir){ */
+/*     current_pulse += (dir * 10); */
+/*     printf("curr %d\n", current_pulse); */
+/*     if (current_pulse >= 1000 && current_pulse <= 2000){ */
+/*       // scale back servo value in our range */
+/*       unsigned long long tmp = MS_TO_SERVO(current_pulse); */
+/*       printf("Scaled : %lx\n", (unsigned long)tmp); */
+/*       servo_set(&servo1, tmp); */
+/*   } */
+/*   } */
+/* #endif */
+
+/* } */
 
 #endif /* ENABLE_ROTARY */
 
@@ -456,6 +458,40 @@ void *ws2812_thread(void *arg){
   return NULL;
 }
 #endif /* ENABLE_WS2812 */
+
+#ifdef ENABLE_ROTARY
+char rotary_thread_stack[THREAD_STACKSIZE_MAIN];
+rotary_t rotarydev;
+
+/* RX handler that waits for a message from the ISR */
+void *rotary_thread(void *arg){
+  msg_t msg_q[1];
+  msg_init_queue(msg_q, 1);
+  unsigned int pid = thread_getpid();
+  
+  puts("Registering rotary_handler thread...");
+  rotary_register(&rotarydev, pid);
+
+  msg_t m;
+
+    while (msg_receive(&m)) {
+      puts("rotary Received msg.");
+      switch (m.type) {
+      case ROTARY_EVT:
+	if (m.content.value == DIR_CW){
+	  puts("DIR CW\n");
+	} else {
+	  puts("DIR CCW\n");
+	}
+	break;
+      default:
+	break;
+      }
+    }
+    return NULL;
+}
+
+#endif
 
 #ifdef ENABLE_NRF_COMM
 char rx_handler_stack[THREAD_STACKSIZE_MAIN];
@@ -1073,6 +1109,7 @@ int main(void)
   gpio_init_int(rot_pin, GPIO_PULLUP, GPIO_BOTH, test_cb, &rot_but_arg);
 #endif
 
+  
 #ifdef ENABLE_SEND_LED
   gpio_init(led, GPIO_DIR_OUT, GPIO_NOPULL);
   gpio_clear(led);
@@ -1082,13 +1119,25 @@ int main(void)
 #ifdef ENABLE_NRF_COMM
   cmd_uber_setup(0, NULL);
 #endif
-    
+  puts("HEYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY\n");
   //shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
 #ifdef ENABLE_ROTARY
-  gpio_init_int(ROTARY_PIN1, GPIO_PULLUP, GPIO_BOTH, rotary_cb, NULL);
+#if 0
+    gpio_init_int(ROTARY_PIN1, GPIO_PULLUP, GPIO_BOTH, rotary_cb, NULL);
   gpio_init_int(ROTARY_PIN2, GPIO_PULLUP, GPIO_BOTH, rotary_cb, NULL); //GPIO_DIR_IN, GPIO_PULLUP);
+#else
+  
+  rotary_init(&rotarydev, ROTARY_PIN1, ROTARY_PIN2);
+  
+  if (thread_create(
+        rotary_thread_stack, sizeof(rotary_thread_stack), THREAD_PRIORITY_MAIN - 1, 0,
+        rotary_thread, 0, "rotary_thread") < 0) {
+        puts("Error in thread_create for rotary");
+        return 1;
+    }
 #endif
 
+#endif
 
 #ifdef ENABLE_RES_LADDER
   adc_init(RES_LADDER_ADC, 10);

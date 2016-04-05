@@ -9,6 +9,7 @@ USEMODULE += ps
 USEMODULE += xtimer
 USEMODULE += nrf24l01p
 USEMODULE += servo
+USEMODULE += rotary_encoder
 
 # set default device parameters in case they are undefined
 NRF_SPI_PORT ?= SPI_0
