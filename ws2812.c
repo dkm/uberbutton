@@ -42,8 +42,8 @@ int ws2812_write(ws2812_t *dev, char *b, unsigned len) {
 #define W01 0x8E
 #define W10 0xE8
 #define W11 0xEE
-  
-int ws2812_write_rgb(ws2812_t *dev, ws2812_rgb_t *leds, unsigned len, char* buffer){
+
+void ws2812_fill_rgb(ws2812_rgb_t *leds, unsigned len, char* buffer){
   int out_count = 0;
   char *bytes = (char*)leds;
   int led_idx;
@@ -77,5 +77,9 @@ int ws2812_write_rgb(ws2812_t *dev, ws2812_rgb_t *leds, unsigned len, char* buff
       out_count++;
     }
   }
+}
+
+int ws2812_write_rgb(ws2812_t *dev, ws2812_rgb_t *leds, unsigned len, char* buffer){
+  ws2812_fill_rgb(leds, len, buffer);
   return ws2812_write(dev, buffer, len*sizeof(ws2812_rgb_t)*8/2);
 }

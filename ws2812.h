@@ -17,3 +17,4 @@ typedef struct __attribute__((packed)) {
 int ws2812_init(ws2812_t *dev, spi_t spi);
 int ws2812_write(ws2812_t *dev, char *b, unsigned len);
 int ws2812_write_rgb(ws2812_t *dev, ws2812_rgb_t *leds, unsigned len, char* buffer);
+void ws2812_fill_rgb(ws2812_rgb_t *leds, unsigned len, char* buffer);

@@ -62,6 +62,11 @@ mm545x_t mm545p = {0};
 
 #if ENABLE_WS2812
 #include "ws2812.h"
+
+#if WS2812_DMA
+#include "ssi_udma.h"
+#endif
+
 #endif
 
 #define TEST_RX_MSG                1
@@ -384,27 +389,47 @@ char ws2812_thread_stack[THREAD_STACKSIZE_MAIN];
 ws2812_rgb_t kit_leds [8] = {{0}};
 static char big_buffer[sizeof(kit_leds)*4] = {0};
 
+#if WS2812_DMA
+uint8_t dma_done = 0;
+#endif
+
 int kit_eye = 3;
 
 void *ws2812_thread(void *arg){
   msg_t msg_q[1];
   int ws2812_loop_period = 1000000;
-
+  ws2812_pid = thread_getpid();
+  
+#if ENABLE_WS2812
+#if WS2812_DMA
+  ssi_udma_t ssi_udmap;
+  ssi_udma_init(&ssi_udmap, (uint8_t*)big_buffer, sizeof(big_buffer), &dma_done, ws2812_pid);
+#else
   ws2812_t ws2812p;
   ws2812_init(&ws2812p, WS2812_SPI_PORT );
-
+#endif
+#endif
+    
   msg_init_queue(msg_q, 1);
 
-  ws2812_pid = thread_getpid();
   msg_t m;
 
   int current_button_state = 0;
   int pending_msg = 0;
+
+#if WS2812_DMA
+    int ready_to_tx = 0;
+#endif
   
   while(1){
     int i;
 
+#if WS2812_DMA
+    if (msg_receive(&m)){
+#else
     if (msg_try_receive(&m) == 1){
+#endif
+
       switch(m.type){
       case WS2812_BUTTON_STATE:
 	if (pending_msg){
@@ -414,11 +439,17 @@ void *ws2812_thread(void *arg){
 	  pending_msg = 0;
 	}
 	break;
+	
       case WS2812_NEW_RFMSG:
 	if (! pending_msg){
 	  pending_msg = 1;
 	  ws2812_loop_period /= 10;
 	}
+	break;
+	
+      case SSI_UDMA_FINISHED:
+	ready_to_tx = 1;
+	// nothing, simply continue
       default:
 	break;
       }
@@ -438,7 +469,21 @@ void *ws2812_thread(void *arg){
 	kit_leds[i].b = 255 / (1 << abs(i-pos)) ;
       }
     }
+#if ENABLE_WS2812
+
+#if WS2812_DMA
+    ws2812_fill_rgb(kit_leds, sizeof(kit_leds)/sizeof(ws2812_rgb_t), big_buffer);
+#else
     ws2812_write_rgb(&ws2812p, kit_leds, sizeof(kit_leds)/sizeof(ws2812_rgb_t), big_buffer);
+#endif
+#endif
+
+#if WS2812_DMA
+    if (ready_to_tx){
+      ready_to_tx = 0;
+      ssi_udma_restart_tx(&ssi_udmap);
+    }
+#endif
 
     kit_eye++;
     if (kit_eye == 9){
@@ -448,7 +493,10 @@ void *ws2812_thread(void *arg){
     } else if (kit_eye == 0){
       kit_eye++;
     }
+
+#if ! WS2812_DMA
     xtimer_usleep(ws2812_loop_period);
+#endif
   }
 
   /* while (msg_receive(&m)) { */
