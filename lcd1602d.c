@@ -37,8 +37,8 @@
 #define HIGH 1
 
 void lcd1602d_init_lcd(struct lcd_ctx *lcd){
-  gpio_init(lcd->rs_pin, GPIO_DIR_OUT, GPIO_NOPULL);
-  gpio_init(lcd->enable_pin, GPIO_DIR_OUT, GPIO_NOPULL);
+  gpio_init(lcd->rs_pin, GPIO_OUT);
+  gpio_init(lcd->enable_pin, GPIO_OUT);
   lcd->currline = 0;
   
   xtimer_usleep(50000);
@@ -193,7 +193,7 @@ void lcd1602d_send(struct lcd_ctx* lcd, uint8_t value, uint8_t mode) {
 
 void lcd1602d_write4bits(struct lcd_ctx* lcd, uint8_t value) {
   for (int i = 0; i < 4; i++) {
-    gpio_init(lcd->data_pins[i], GPIO_DIR_OUT, GPIO_NOPULL);
+    gpio_init(lcd->data_pins[i], GPIO_OUT);
 
     if ((value >> i) & 0x01)
       gpio_set(lcd->data_pins[i]);

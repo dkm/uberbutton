@@ -1,4 +1,4 @@
-#ifdef ENABLE_NRF_COMM
+#if ENABLE_NRF_COMM
 #ifndef NRF_SPI_PORT
 #error "NRF_SPI_PORT not defined"
 #endif
@@ -48,7 +48,7 @@ static servo_t servo1;
 #include <periph/adc.h>
 #include "periph_conf.h"
 
-#ifdef ENABLE_LCD
+#if ENABLE_LCD
 #include "lcd1602d.h"
 #endif
 
@@ -66,7 +66,7 @@ mm545x_t mm545p = {0};
 
 #define TEST_RX_MSG                1
 
-#ifdef ENABLE_NRF_COMM
+#if ENABLE_NRF_COMM
 static int cmd_uber_setup(int argc, char **argv);
 static int cmd_send(int argc, char **argv);
 static int cmd_get_status(int argc, char **argv);
@@ -83,18 +83,18 @@ static int cmd_set_dpl(int argc, char **argv);
 void printbin(unsigned byte);
 void print_register(char reg, int num_bytes);
 
-#ifdef ENABLE_SEND_LED
+#if ENABLE_SEND_LED
 static gpio_t led = GPIO_PIN(PORT_F, 1);
 #endif
 
 static unsigned int display_pid = KERNEL_PID_UNDEF;
 
-#ifdef ENABLE_NRF_COMM
+#if ENABLE_NRF_COMM
 static nrf24l01p_t nrf24l01p_0;
 static unsigned int sender_pid = KERNEL_PID_UNDEF;
 #endif
 
-#ifdef ENABLE_LCD
+#if ENABLE_LCD
 struct lcd_ctx lcd = {
   .rs_pin = GPIO_PIN(PORT_E, 5),
   .enable_pin = GPIO_PIN(PORT_E,4),
@@ -108,7 +108,7 @@ struct lcd_ctx lcd = {
  * define some additional shell commands
  */
 static const shell_command_t shell_commands[] = {
-#ifdef ENABLE_NRF_COMM
+#if ENABLE_NRF_COMM
     {"setaa", "set auto ack", cmd_set_aa },
     {"setchannel", "set channel", cmd_set_channel },
     {"status", "get status value", cmd_get_status },
@@ -125,7 +125,7 @@ static const shell_command_t shell_commands[] = {
 };
 
 // ROTARY
-#ifdef ENABLE_ROTARY
+#if ENABLE_ROTARY
 
 #include "rotary.h"
 
@@ -276,7 +276,7 @@ void prtbin(unsigned byte)
 }
 
 
-#ifdef ENABLE_NRF_COMM
+#if ENABLE_NRF_COMM
 /**
  * @print register
  */
@@ -322,7 +322,7 @@ char display_handler_stack[THREAD_STACKSIZE_MAIN];
 static char dest_str[256] = {0};
 static int dest = 0;
 
-#ifdef ENABLE_NRF_COMM
+#if ENABLE_NRF_COMM
 char tx_handler_stack[THREAD_STACKSIZE_MAIN];
 
 /* RX handler that waits for a message from the ISR */
@@ -337,11 +337,11 @@ void *nrf24l01p_tx_thread(void *arg){
       printf("nrf24l01p_tx got a message\n");
 
       //      lcd1602d_printstr(&lcd, 0, 1, dest_str);
-#ifdef ENABLE_LCD
+#if ENABLE_LCD
       lcd1602d_printstr(&lcd, 10, 1, "SEND...");
 #endif
       cmd_send(4, (char**)m.content.ptr);
-#ifdef ENABLE_LCD
+#if ENABLE_LCD
       lcd1602d_printstr(&lcd, 10, 1, "IDLE   ");
 #endif
     }
@@ -354,21 +354,22 @@ void *display_thread(void *arg){
     msg_init_queue(msg_q, 1);
 
     display_pid = thread_getpid();
-
+    printf("Display thread starting %d\n", display_pid);
     msg_t m;
 
     while (msg_receive(&m)) {
       printf("display_thread got a message\n");
 
-#ifdef ENABLE_LCD
+#if ENABLE_LCD
       const char *name = uber_get_name(dest);
       lcd1602d_printstr(&lcd, 0, 1, name);
       int i;
       for (i=strlen(name); i<10; i++){
 	lcd1602d_printstr(&lcd, i, 1, " ");
       }
-    }
 #endif
+    }
+
     return NULL;
 }
 
@@ -459,7 +460,7 @@ void *ws2812_thread(void *arg){
 }
 #endif /* ENABLE_WS2812 */
 
-#ifdef ENABLE_ROTARY
+#if ENABLE_ROTARY
 char rotary_thread_stack[THREAD_STACKSIZE_MAIN];
 rotary_t rotarydev;
 
@@ -468,6 +469,11 @@ void *rotary_thread(void *arg){
   msg_t msg_q[1];
   msg_init_queue(msg_q, 1);
   unsigned int pid = thread_getpid();
+
+#if ENABLE_SERVO
+  int dir = 0;
+#endif
+
   
   puts("Registering rotary_handler thread...");
   rotary_register(&rotarydev, pid);
@@ -480,20 +486,39 @@ void *rotary_thread(void *arg){
       case ROTARY_EVT:
 	if (m.content.value == DIR_CW){
 	  puts("DIR CW\n");
+#if ENABLE_SERVO
+	  dir=1;
+#endif
 	} else {
 	  puts("DIR CCW\n");
+#if ENABLE_SERVO
+	  dir=-1;
+#endif
 	}
 	break;
       default:
 	break;
       }
+#if ENABLE_SERVO
+      if(dir){
+	current_pulse += (dir * 10);
+	printf("curr %d\n", current_pulse);
+	if (current_pulse >= 1000 && current_pulse <= 2000){
+	  // scale back servo value in our range
+	  unsigned long long tmp = MS_TO_SERVO(current_pulse);
+	  printf("Scaled : %lx\n", (unsigned long)tmp);
+	  servo_set(&servo1, tmp);
+	}
+      }
+#endif
+
     }
     return NULL;
 }
 
 #endif
 
-#ifdef ENABLE_NRF_COMM
+#if ENABLE_NRF_COMM
 char rx_handler_stack[THREAD_STACKSIZE_MAIN];
 
 /* RX handler that waits for a message from the ISR */
@@ -541,10 +566,12 @@ void *nrf24l01p_rx_handler(void *arg)
 		char buf[256] = {0};
 		uber_get_frame(&frame, buf);
 
-#ifdef ENABLE_LCD
+#if ENABLE_LCD
 		printf("lcd rx:%p\n", &lcd);
 		lcd1602d_printstr(&lcd, 0, 0, buf);
+#endif
 
+#if ENABLE_WS2812		
 		if (ws2812_pid != KERNEL_PID_UNDEF) {
 		  msg_t m;
 		  m.type = WS2812_NEW_RFMSG;
@@ -702,16 +729,6 @@ int cmd_uber_setup(int argc, char **argv)
         return 1;
     }
 
-    /* create thread that display msg */
-    if (thread_create(
-        display_handler_stack, sizeof(display_handler_stack), THREAD_PRIORITY_MAIN - 1, 0,
-        display_thread, 0, "display_thread") < 0) {
-        puts("Error in thread_create");
-        return 1;
-    }
-
-
-
 
     /* setup device as receiver */
     if (nrf24l01p_set_rxmode(&nrf24l01p_0) < 0) {
@@ -729,7 +746,7 @@ int cmd_uber_setup(int argc, char **argv)
  */
 int cmd_send(int argc, char **argv)
 {
-#ifdef ENABLE_SEND_LED
+#if ENABLE_SEND_LED
     gpio_set(led);
 #endif
     puts("Send");
@@ -797,7 +814,7 @@ int cmd_send(int argc, char **argv)
         puts("Error in nrf24l01p_set_rxmode");
         return 1;
     }
-#ifdef ENABLE_SEND_LED
+#if ENABLE_SEND_LED
     gpio_clear(led);
 #endif
     return 0;
@@ -1001,7 +1018,7 @@ void test_cb(void * bid){
     }
     printf("dest %d\n", dest != 8 ? dest : 0xFF);
 
-#ifdef ENABLE_LCD
+#if ENABLE_LCD
     printf("lcd cb:%p\n", &lcd);
     //    lcd1602d_printstr(&lcd, 0, 1, dest_str);
     if (display_pid != KERNEL_PID_UNDEF) {
@@ -1024,7 +1041,7 @@ void test_cb(void * bid){
   sprintf(dest_str, "%d", dest != 8 ? dest : 0xFF);
   dest_str[9] = 0;
 
-#ifdef ENABLE_NRF_COMM
+#if ENABLE_NRF_COMM
   if (sender_pid != KERNEL_PID_UNDEF) {
     msg_t m;
     m.type = RCV_PKT_NRF24L01P;
@@ -1038,9 +1055,9 @@ void test_cb(void * bid){
   //cmd_send(4, argv);
 }
 
-#ifdef ENABLE_RES_LADDER
-static int res_ladder_val(adc_t adc, int channel){
-  int sample = adc_sample(adc, channel);
+#if ENABLE_RES_LADDER
+static int res_ladder_val(adc_t adc){
+  int sample = adc_sample(adc, ADC_RES_10BIT);
   const int max_v = 4095;
   int j;
   int but_state = 0;
@@ -1066,6 +1083,8 @@ int main(void)
 #if ENABLE_SERVO
   int r = servo_init(&servo1, SERVO_PWM, 0, MS_TO_SERVO(1000), MS_TO_SERVO(2000));
   printf("servo init : %d\n", r);
+#else
+  printf("servo disable\n");
 #endif
 
 #if ENABLE_MM5450
@@ -1080,16 +1099,26 @@ int main(void)
   //  mm545x_refreshSegments(&mm545p);
   /* gpio_init(GPIO_PIN(PORT_C,5), GPIO_DIR_OUT, GPIO_NOPULL); */
   /* gpio_set(GPIO_PIN(PORT_C,5)); */
+#else
+  printf("mm5450 disable\n");
 #endif
 
 
+  /* create thread that display msg */
+  if (thread_create(
+         display_handler_stack, sizeof(display_handler_stack), THREAD_PRIORITY_MAIN - 1, 0,
+	 display_thread, 0, "display_thread") < 0) {
+    puts("Error in thread_create");
+    return 1;
+  }
 
-  
-#ifdef ENABLE_LCD
+#if ENABLE_LCD
   lcd1602d_init_lcd(&lcd);
   //  lcd1602d_setCursor(&lcd, 0,0);
   printf("lcd:%p\n", &lcd);
   lcd1602d_printstr(&lcd, 0, 0, "STARTING");
+#else
+  printf("lcd disable\n");
 #endif
   
   /* lcd1602d_printstr(&lcd, 0,0,"Bojr"); */
@@ -1098,35 +1127,48 @@ int main(void)
 #if ENABLE_BOARD_SWITCH
   gpio_t b1 = GPIO_PIN(PORT_F, 4);
   int b1_v = 1, b2_v = 2;
-  gpio_init_int(b1, GPIO_PULLUP, GPIO_FALLING, test_cb, &b1_v);
+  gpio_init_int(b1, GPIO_IN_PU, GPIO_FALLING, test_cb, &b1_v);
   gpio_t b2 = GPIO_PIN(PORT_F, 0);
-  gpio_init_int(b2, GPIO_PULLUP, GPIO_FALLING, test_cb, &b2_v);
+  gpio_init_int(b2, GPIO_IN_PU, GPIO_FALLING, test_cb, &b2_v);
+#else
+  printf("board switch disable\n");
+
 #endif
 
 #if ENABLE_ROTARY_BUTTON
   gpio_t rot_pin = ROTARY_BUTTON_PIN;
   int rot_but_arg = 1;
-  gpio_init_int(rot_pin, GPIO_PULLUP, GPIO_BOTH, test_cb, &rot_but_arg);
+  gpio_init_int(rot_pin, GPIO_IN_PU, GPIO_BOTH, test_cb, &rot_but_arg);
+#else
+  printf("rotary button disable\n");
+
 #endif
 
   
-#ifdef ENABLE_SEND_LED
+#if ENABLE_SEND_LED
   gpio_init(led, GPIO_DIR_OUT, GPIO_NOPULL);
   gpio_clear(led);
+#else
+  printf("send led disable\n");
 #endif
 
+
   //char line_buf[SHELL_DEFAULT_BUFSIZE];
-#ifdef ENABLE_NRF_COMM
+#if ENABLE_NRF_COMM
   cmd_uber_setup(0, NULL);
-#endif
-  puts("HEYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY\n");
-  //shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
-#ifdef ENABLE_ROTARY
-#if 0
-    gpio_init_int(ROTARY_PIN1, GPIO_PULLUP, GPIO_BOTH, rotary_cb, NULL);
-  gpio_init_int(ROTARY_PIN2, GPIO_PULLUP, GPIO_BOTH, rotary_cb, NULL); //GPIO_DIR_IN, GPIO_PULLUP);
 #else
-  
+  printf("nrf24 disable\n");
+
+#endif
+
+  //shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
+#if ENABLE_ROTARY
+#if 0
+    gpio_init_int(ROTARY_PIN1, GPIO_IN_PU, GPIO_BOTH, rotary_cb, NULL);
+  gpio_init_int(ROTARY_PIN2, GPIO_IN_PU, GPIO_BOTH, rotary_cb, NULL); //GPIO_DIR_IN, GPIO_PULLUP);
+#else
+  printf("Init rotary encoder\n");
+
   rotary_init(&rotarydev, ROTARY_PIN1, ROTARY_PIN2);
   
   if (thread_create(
@@ -1137,13 +1179,19 @@ int main(void)
     }
 #endif
 
+#else
+  printf("rotary disable\n");
+
 #endif
 
-#ifdef ENABLE_RES_LADDER
-  adc_init(RES_LADDER_ADC, 10);
-  int button_state = res_ladder_val(RES_LADDER_ADC, RES_LADDER_CHAN);
-#endif
+#if ENABLE_RES_LADDER
+  adc_init(RES_LADDER_ADC_LINE);//, 10);
+  int button_state = res_ladder_val(RES_LADDER_ADC_LINE);
+#else
+  printf("res ladder (adc) disable\n");
 
+#endif
+  
 #if ENABLE_WS2812
   if (thread_create(
         ws2812_thread_stack, sizeof(ws2812_thread_stack), THREAD_PRIORITY_MAIN - 1, 0,
@@ -1151,6 +1199,9 @@ int main(void)
         puts("Error in thread_create");
         return 1;
     }
+#else
+  printf("ws2812 disable\n");
+
 #endif
 
   // endless loop start
@@ -1210,8 +1261,8 @@ int main(void)
     }
 #endif
 
-#ifdef ENABLE_RES_LADDER
-    int new_button_state = res_ladder_val(RES_LADDER_ADC, RES_LADDER_CHAN);
+#if ENABLE_RES_LADDER
+    int new_button_state = res_ladder_val(RES_LADDER_ADC_LINE);
 
     if (new_button_state != button_state){
       printf("%d-%d-%d-%d\n", new_button_state & 0x8 ? 1 : 0,
@@ -1229,13 +1280,16 @@ int main(void)
 	msg_send_int(&m, display_pid);
       }
 
+#if ENABLE_WS2812
       if ((new_button_state & 0x8) != (button_state & 0x8) &&
 	  ws2812_pid != KERNEL_PID_UNDEF) {
 	msg_t m;
+
 	m.type = WS2812_BUTTON_STATE;
 	m.content.value = new_button_state & 0x8;
 	msg_send_int(&m, ws2812_pid);
       }
+#endif
 
       button_state = new_button_state;
     }

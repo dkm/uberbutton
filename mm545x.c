@@ -65,8 +65,8 @@ int mm545x_init(mm545x_t *mm, gpio_t clock_pin, gpio_t data_pin){
 	mm->clock_pin = clock_pin;
 	mm->data_pin = data_pin;
 	
-	gpio_init(clock_pin, GPIO_DIR_OUT, GPIO_NOPULL);
-        gpio_init(data_pin, GPIO_DIR_OUT, GPIO_NOPULL);
+	gpio_init(clock_pin, GPIO_OUT);
+        gpio_init(data_pin, GPIO_OUT);
 	
         gpio_clear(clock_pin);
         gpio_clear(data_pin);
