@@ -1,3 +1,5 @@
+#include <math.h>
+
 #if ENABLE_NRF_COMM
 #ifndef NRF_SPI_PORT
 #error "NRF_SPI_PORT not defined"
@@ -386,20 +388,28 @@ char ws2812_thread_stack[THREAD_STACKSIZE_MAIN];
 #define WS2812_BUTTON_STATE  0
 #define WS2812_NEW_RFMSG  1
 
-ws2812_rgb_t kit_leds [8] = {{0}};
+static ws2812_rgb_t kit_leds [8] = {{0}};
+#define NUM_LEDS  (sizeof(kit_leds)/sizeof(ws2812_rgb_t))
+
 static char big_buffer[sizeof(kit_leds)*4] = {0};
+
+#define LEDS_VIRT_WIDTH (NUM_LEDS+4)
+
 
 #if WS2812_DMA
 uint8_t dma_done = 0;
 #endif
 
 int kit_eye = 3;
+uint8_t led_val = 0;
+
+static float leds_decay[LEDS_VIRT_WIDTH];
 
 void *ws2812_thread(void *arg){
   msg_t msg_q[1];
-  int ws2812_loop_period = 1000000;
+  int ws2812_loop_period = 100000;
   ws2812_pid = thread_getpid();
-  
+  printf("Thread of leds, driving %d\n", NUM_LEDS);
 #if ENABLE_WS2812
 #if WS2812_DMA
   ssi_udma_t ssi_udmap;
@@ -413,13 +423,19 @@ void *ws2812_thread(void *arg){
   msg_init_queue(msg_q, 1);
 
   msg_t m;
-
+  int cycle_idx=0;
   int current_button_state = 0;
   int pending_msg = 0;
 
 #if WS2812_DMA
-    int ready_to_tx = 0;
+  int ready_to_tx = 0;
 #endif
+
+  int index;
+  for(index=0; index<LEDS_VIRT_WIDTH; index++){
+    leds_decay[index] = cos(2*index*3.14/(2*NUM_LEDS));
+    leds_decay[index] = leds_decay[index]>0?leds_decay[index]:0;
+  }
   
   while(1){
     int i;
@@ -455,26 +471,45 @@ void *ws2812_thread(void *arg){
       }
     }
 
-    if (pending_msg){
+    if (!pending_msg){
       int pos = abs(kit_eye)-1;
-      for (i=0; i<4; i++){
-	kit_leds[i].b = (i == (pos %4))? 255 : 60;
-      	kit_leds[7-i].r = (i == (pos %4))? 255 : 60 ;
+      /* for (i=0; i<4; i++){ */
+      /* 	kit_leds[i].b = (i == (pos %4))? 255 : 60; */
+      /* 	kit_leds[7-i].r = (i == (pos %4))? 255 : 60 ; */
+      /* } */
+      int led_idx;
+      for (led_idx = 0; led_idx<NUM_LEDS; led_idx++){
+	int r,g,b;
+	const float col_freq = 3.14*2/256;
+
+	r = sin(col_freq * (cycle_idx+256/led_idx) + 2 ) * 127 + 128;
+	g = sin(col_freq * (cycle_idx+256/led_idx) + 0 ) * 127 + 128;
+	b = sin(col_freq * (cycle_idx+256/led_idx) + 4 ) * 127 + 128;
+	cycle_idx++;
+
+	kit_leds[led_idx].r = (int)(r*.6);
+	kit_leds[led_idx].g = (int)(g*.6);
+	kit_leds[led_idx].b = (int)(b*.6);
       }
-      
     } else {
       int pos = abs(kit_eye)-1;
+      int dir = kit_eye > 0;
+      int v;
+      int led_idx;
 
-      for (i=0; i<8; i++){
-	kit_leds[i].b = 255 / (1 << abs(i-pos)) ;
+      for (led_idx=0; led_idx < NUM_LEDS; led_idx++){
+	if ((dir && led_idx > pos) || (!dir && led_idx < pos))
+	  continue;
+	v = leds_decay[abs(led_idx-pos)] * 255;
+      	kit_leds[led_idx].r = v;
       }
     }
 #if ENABLE_WS2812
 
 #if WS2812_DMA
-    ws2812_fill_rgb(kit_leds, sizeof(kit_leds)/sizeof(ws2812_rgb_t), big_buffer);
+    ws2812_fill_rgb(kit_leds, NUM_LEDS, big_buffer);
 #else
-    ws2812_write_rgb(&ws2812p, kit_leds, sizeof(kit_leds)/sizeof(ws2812_rgb_t), big_buffer);
+    ws2812_write_rgb(&ws2812p, kit_leds, NUM_LEDS, big_buffer);
 #endif
 #endif
 
@@ -486,15 +521,15 @@ void *ws2812_thread(void *arg){
 #endif
 
     kit_eye++;
-    if (kit_eye == 9){
-      kit_eye = -8;
-    } else if (kit_eye == -9){
-      kit_eye = 8;
+    if (kit_eye == (NUM_LEDS+1+4)){
+      kit_eye = -(NUM_LEDS +4);
+    } else if (kit_eye == -(NUM_LEDS + 1 + 4)){
+      kit_eye = NUM_LEDS+4;
     } else if (kit_eye == 0){
       kit_eye++;
     }
 
-#if ! WS2812_DMA
+#if WS2812_DMA
     xtimer_usleep(ws2812_loop_period);
 #endif
   }
@@ -619,7 +654,8 @@ void *nrf24l01p_rx_handler(void *arg)
 		lcd1602d_printstr(&lcd, 0, 0, buf);
 #endif
 
-#if ENABLE_WS2812		
+#if ENABLE_WS2812
+		printf("Sending msg to WS2812\n");
 		if (ws2812_pid != KERNEL_PID_UNDEF) {
 		  msg_t m;
 		  m.type = WS2812_NEW_RFMSG;
@@ -1267,10 +1303,10 @@ int main(void)
       ws2812_write_rgb(&ws2812p, kit_leds, sizeof(kit_leds)/sizeof(ws2812_rgb_t), big_buffer);
 
       kit_eye++;
-      if (kit_eye == 9){
-	kit_eye = -8;
-      } else if (kit_eye == -9){
-	kit_eye = 8;
+      if (kit_eye == (NUM_LEDS+1+4)){
+	kit_eye = -(NUM_LEDS+4);
+      } else if (kit_eye == -(NUM_LEDS+1+4)){
+	kit_eye = NUM_LEDS + 4;
       } else if (kit_eye == 0){
 	kit_eye++;
       }
