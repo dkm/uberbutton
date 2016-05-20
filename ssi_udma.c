@@ -185,7 +185,7 @@ ssi_udma_init(ssi_udma_t *dev, uint8_t *pui8SPIData, uint16_t ui16DataSize,
     // source data
     //
     ROM_SSIConfigSetExpClk(SSI1_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_0,
-                            SSI_MODE_MASTER, 2500000, 8);
+                            SSI_MODE_MASTER, 4000000/* 2500000 */, 8);
 
     //
     // Enable the SSI for operation, and enable the uDMA interface for both the
