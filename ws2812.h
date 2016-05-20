@@ -7,7 +7,9 @@ typedef struct {
 } ws2812_t;
 
 typedef struct __attribute__((packed)) {
-  char g,r,b;
+  char b;
+  char r;
+  char g;
 } ws2812_rgb_t;
 
 #define BLUE {0x00, 0x00, 0xFF}

@@ -35,13 +35,19 @@ int ws2812_write(ws2812_t *dev, char *b, unsigned len) {
   return 0;
 }
 
-#define ZERO_BIT_PULSE 0x8 // 1000 (0000)  ~250ns
-#define ONE_BIT_PULSE 0xE //  1110 (0000)  ~750ns
+#define ZERO_BIT_PULSE 0x08 // 1000 (0000)  ~250ns
+#define ONE_BIT_PULSE 0x0E //  1110 (0000)  ~750ns
 
-#define W00 0x88
-#define W01 0x8E
-#define W10 0xE8
-#define W11 0xEE
+#define CONCAT(bit0, bit1) (bit0 | (bit1 << 4))
+#define W00 CONCAT(ZERO_BIT_PULSE, ZERO_BIT_PULSE)
+#define W01 CONCAT(ZERO_BIT_PULSE, ONE_BIT_PULSE)
+#define W10 CONCAT(ONE_BIT_PULSE, ZERO_BIT_PULSE)
+#define W11 CONCAT(ONE_BIT_PULSE, ONE_BIT_PULSE)
+
+/* #define W00 0x88 // 1000 1000 */
+/* #define W01 0x8E // 1000 1110 */
+/* #define W10 0xE8 */
+/* #define W11 0xEE */
 
 void ws2812_fill_rgb(ws2812_rgb_t *leds, unsigned len, char* buffer){
   int out_count = 0;
@@ -58,16 +64,16 @@ void ws2812_fill_rgb(ws2812_rgb_t *leds, unsigned len, char* buffer){
 	buffer[out_count] = W00;
 	break;
       case 0x1:
-	buffer[out_count] = W01;
+	buffer[out_count] = W10;
 	break;
       case 0x2:
-	buffer[out_count] = W10;
+	buffer[out_count] = W01;
 	break;
       case 0x3:
 	buffer[out_count] = W11;
 	break;
       }
-      cur_byte<<2;
+      cur_byte<<=2;
       /* buffer[out_count] = cur_byte & 0x80 ? ONE_BIT_PULSE : ZERO_BIT_PULSE; */
       /* cur_byte <<=1; */
 
