@@ -1,0 +1,83 @@
+
+(rules PCB uber
+  (snap_angle 
+    fortyfive_degree
+  )
+  (autoroute_settings
+    (fanout off)
+    (autoroute on)
+    (postroute on)
+    (vias on)
+    (via_costs 500)
+    (plane_via_costs 5)
+    (start_ripup_costs 100)
+    (start_pass_no 1435)
+    (layer_rule F.Cu
+      (active on)
+      (preferred_direction horizontal)
+      (preferred_direction_trace_costs 100.0)
+      (against_preferred_direction_trace_costs 2.4)
+    )
+    (layer_rule B.Cu
+      (active on)
+      (preferred_direction vertical)
+      (preferred_direction_trace_costs 1.0)
+      (against_preferred_direction_trace_costs 1.7)
+    )
+  )
+  (rule
+    (width 300.0)
+    (clear 400.2)
+    (clear 150.0 (type smd_to_turn_gap))
+    (clear 100.0 (type smd_smd))
+  )
+  (padstack "Via[0-1]_1700:400_um"
+    (shape
+      (circle F.Cu 1700.0 0.0 0.0)
+    )
+    (shape
+      (circle B.Cu 1700.0 0.0 0.0)
+    )
+    (attach off)
+  )
+  (via 
+    "Via[0-1]_1700:400_um" "Via[0-1]_1700:400_um" default
+  )
+  (via 
+    "Via[0-1]_1700:400_um-kicad_default" "Via[0-1]_1700:400_um" "kicad_default"
+  )
+  (via_rule
+    default "Via[0-1]_1700:400_um"
+  )
+  (via_rule
+    "kicad_default" "Via[0-1]_1700:400_um-kicad_default"
+  )
+  (class default
+    (clearance_class default)
+    (via_rule default)
+    (rule
+      (width 300.0)
+    )
+    (circuit 
+      (use_layer F.Cu B.Cu)
+    )
+  )
+  (class "kicad_default"
+    GND +3V3 "R2R_BUT1" "R2R_BUT5" "R2R_BUT2" "R2R_BUT6" "R2R_BUT3" "R2R_BUT7"
+    "R2R_BUT4" "R2R_BUT8" "Net-(J1-Pad2)" "Net-(J1-Pad3)" "Net-(J1-Pad4)" "LCD_PE4" "LCD_PE5" "SERVO_PWN"
+    "NRF24_MOSI" "NRF24_CE" "NRF24_IRQ" "Net-(J2-Pad2)" "Net-(J2-Pad3)" "Net-(J2-Pad4)" "Net-(J2-Pad5)" "Net-(J2-Pad6)"
+    "Net-(J2-Pad7)" "NRF24_MISO" "Net-(J2-Pad9)" "NRF24_CLK" +5V "LCD_PD0" "LCD_PD1" "LCD_PD2"
+    "LCD_PD3" "BUT_1_4_ADC" "BUT_5_8_ADC" "NRF24_CSN" "WS2812_DIN" "Net-(J4-Pad1)" "Net-(J4-Pad2)" "Net-(J4-Pad3)"
+    "MM5450_DIN" "MM5450_CLK" "Net-(J4-Pad6)" "ROT_PIN_B" "ROT_PIN_A" "ROT_BUT" "Net-(J4-Pad10)" "Net-(MM5450_CONN1-Pad3)"
+    "Net-(R10K1-Pad2)" "Net-(R10K2-Pad2)" "Net-(R10K3-Pad2)" "Net-(R10K5-Pad1)" "Net-(R10K6-Pad2)" "Net-(R10K10-Pad2)" "Net-(R10K10-Pad1)" "Net-(R10K12-Pad2)"
+    "Net-(R10K14-Pad2)" "Net-(R10K15-Pad2)" "Net-(R10K16-Pad2)" "Net-(R10K18-Pad1)" "Net-(R10K19-Pad2)" "Net-(R10K21-Pad1)" "Net-(R10K22-Pad2)" "Net-(R10K25-Pad2)"
+    (clearance_class "kicad_default")
+    (via_rule kicad_default)
+    (rule
+      (width 300.0)
+    )
+    (circuit 
+      (use_layer F.Cu B.Cu)
+    )
+  )
+)
