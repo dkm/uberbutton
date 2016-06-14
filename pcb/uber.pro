@@ -1,4 +1,4 @@
-update=Wed 13 Apr 2016 12:49:32 PM CEST
+update=Tue 14 Jun 2016 01:31:32 PM CEST
 version=1
 last_client=kicad
 [cvpcb]
@@ -40,7 +40,7 @@ LibName12=valves
 version=1
 [eeschema]
 version=1
-LibDir=
+LibDir=complib
 [eeschema/libraries]
 LibName1=uber-rescue
 LibName2=boosterpack
@@ -74,3 +74,4 @@ LibName29=opto
 LibName30=atmel
 LibName31=contrib
 LibName32=valves
+LibName33=complib/stellaris
