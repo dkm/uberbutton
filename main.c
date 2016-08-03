@@ -430,7 +430,7 @@ void *ws2812_thread(void *arg){
 #endif
 #endif
     
-  msg_init_queue(msg_q, 1);
+  msg_init_queue(msg_q, 50);
 
   msg_t m;
   int cycle_idx=0;
@@ -449,7 +449,7 @@ void *ws2812_thread(void *arg){
   
   while(1){
     int i;
-
+    if(pending_msg) pending_msg--;
 #if WS2812_DMA
     if (msg_receive(&m)){
 #else
@@ -457,20 +457,19 @@ void *ws2812_thread(void *arg){
 #endif
 
       switch(m.type){
+
       case WS2812_BUTTON_STATE:
 	if (pending_msg){
 	  current_button_state = m.content.value;
 	  memset(kit_leds, 0, sizeof(kit_leds));
-	  ws2812_loop_period *= 10;
+	  /* ws2812_loop_period *= 10; */
 	  pending_msg = 0;
 	}
 	break;
 	
       case WS2812_NEW_RFMSG:
-	if (! pending_msg){
-	  pending_msg = 1;
-	  ws2812_loop_period /= 10;
-	}
+	printf("got msg\n");
+	pending_msg = 100;
 	break;
 	
       case SSI_UDMA_FINISHED:
@@ -481,7 +480,11 @@ void *ws2812_thread(void *arg){
       }
     }
 
-    if (!pending_msg){
+    int r_phase = pending_msg ? 0 : 2;
+    int g_phase = pending_msg ? 0 : 0;
+    int b_phase = pending_msg ? 0 : 4;
+
+    /* if (!pending_msg){ */
       int pos = abs(kit_eye)-1;
       /* for (i=0; i<4; i++){ */
       /* 	kit_leds[i].b = (i == (pos %4))? 255 : 60; */
@@ -492,28 +495,28 @@ void *ws2812_thread(void *arg){
 	int r,g,b;
 	const float col_freq = 3.14*2/256;
 
-	r = sin(col_freq * (cycle_idx+256/led_idx) + 2 ) * 127 + 128;
-	g = sin(col_freq * (cycle_idx+256/led_idx) + 0 ) * 127 + 128;
-	b = sin(col_freq * (cycle_idx+256/led_idx) + 4 ) * 127 + 128;
+	r = sin(col_freq * (cycle_idx+256/led_idx) + r_phase ) * 127 + 128;
+	g = sin(col_freq * (cycle_idx+256/led_idx) + g_phase ) * 127 + 128;
+	b = sin(col_freq * (cycle_idx+256/led_idx) + b_phase ) * 127 + 128;
 	cycle_idx++;
 
 	kit_leds[led_idx].r = (int)(r*.6);
 	kit_leds[led_idx].g = (int)(g*.6);
 	kit_leds[led_idx].b = (int)(b*.6);
       }
-    } else {
-      int pos = abs(kit_eye)-1;
-      int dir = kit_eye > 0;
-      int v;
-      int led_idx;
+    /* } else { */
+    /*   int pos = abs(kit_eye)-1; */
+    /*   int dir = kit_eye > 0; */
+    /*   int v; */
+    /*   int led_idx; */
 
-      for (led_idx=0; led_idx < NUM_LEDS; led_idx++){
-	if ((dir && led_idx > pos) || (!dir && led_idx < pos))
-	  continue;
-	v = leds_decay[abs(led_idx-pos)] * 255;
-      	kit_leds[led_idx].r = v;
-      }
-    }
+    /*   for (led_idx=0; led_idx < NUM_LEDS; led_idx++){ */
+    /* 	if ((dir && led_idx > pos) || (!dir && led_idx < pos)) */
+    /* 	  continue; */
+    /* 	v = leds_decay[abs(led_idx-pos)] * 255; */
+    /*   	kit_leds[led_idx].r = v; */
+    /*   } */
+    /* } */
 #if ENABLE_WS2812
 
 #if WS2812_DMA
@@ -716,7 +719,7 @@ void *nrf24l01p_rx_handler(void *arg)
 #endif
 
 #if ENABLE_WS2812
-		printf("Sending msg to WS2812\n");
+		printf("Sending msg to WS2812 %d\n", ws2812_pid);
 		if (ws2812_pid != KERNEL_PID_UNDEF) {
 		  msg_t m;
 		  m.type = WS2812_NEW_RFMSG;
