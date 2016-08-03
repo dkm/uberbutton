@@ -27,6 +27,12 @@
 static unsigned int current_pulse = 1000;
 static servo_t servo1;
 #define MS_TO_SERVO(x) (((unsigned long long)(x) * SERVO_RESOLUTION * SERVO_FREQUENCY)/SEC_IN_USEC)
+
+enum {
+	SERVO_RX_MSG,
+	SERVO_CLOSE_MSG,
+	SERVO_SET_MSG,
+};
 #endif
 
 #if ENABLE_MM5450
@@ -380,6 +386,10 @@ void *display_thread(void *arg){
     return NULL;
 }
 
+#if ENABLE_SERVO_NOTIF
+static unsigned int servo_pid = KERNEL_PID_UNDEF;
+char servo_thread_stack[THREAD_STACKSIZE_MAIN];
+#endif
 
 #if ENABLE_WS2812
 static unsigned int ws2812_pid = KERNEL_PID_UNDEF;
@@ -553,11 +563,10 @@ void *rotary_thread(void *arg){
   msg_init_queue(msg_q, 1);
   unsigned int pid = thread_getpid();
 
-#if ENABLE_SERVO
+#if ENABLE_SERVO_ROTARY
   int dir = 0;
 #endif
 
-  
   puts("Registering rotary_handler thread...");
   rotary_register(&rotarydev, pid);
 
@@ -569,12 +578,12 @@ void *rotary_thread(void *arg){
       case ROTARY_EVT:
 	if (m.content.value == DIR_CW){
 	  puts("DIR CW\n");
-#if ENABLE_SERVO
+#if ENABLE_SERVO_ROTARY
 	  dir=1;
 #endif
 	} else {
 	  puts("DIR CCW\n");
-#if ENABLE_SERVO
+#if ENABLE_SERVO_ROTARY
 	  dir=-1;
 #endif
 	}
@@ -582,7 +591,7 @@ void *rotary_thread(void *arg){
       default:
 	break;
       }
-#if ENABLE_SERVO
+#if ENABLE_SERVO_ROTARY
       if(dir){
 	current_pulse += (dir * 10);
 	printf("curr %d\n", current_pulse);
@@ -601,6 +610,58 @@ void *rotary_thread(void *arg){
 
 #endif
 
+#if ENABLE_SERVO
+void *servo_handler(void *arg)
+{
+	static msg_t close_msg = {
+		.type = SERVO_CLOSE_MSG
+	};
+	static xtimer_t close_timeout = {0};
+
+    msg_t msg_q[1];
+    msg_init_queue(msg_q, 1);
+    servo_pid = thread_getpid();
+    msg_t m;
+
+    int r = servo_init(&servo1, SERVO_PWM, 0, MS_TO_SERVO(1000),
+		       MS_TO_SERVO(2000));
+
+    printf("servo init : %d\n", r);
+
+    servo_set(&servo1, MS_TO_SERVO(1000));
+
+    while (msg_receive(&m)) {
+	    long long val;
+	    switch (m.type) {
+
+	    case SERVO_RX_MSG:
+		    printf("Opening BOX\n");
+		    val = MS_TO_SERVO(1700);
+		    close_timeout.target = 0;
+		    close_timeout.long_target = 0;
+		    xtimer_set_msg(&close_timeout, 100 * 100000, &close_msg, servo_pid);
+
+		    break;
+
+	    case SERVO_CLOSE_MSG:
+		    printf("Closing BOX\n");
+		    val = MS_TO_SERVO(1000);
+		    break;
+
+	    case SERVO_SET_MSG:
+		    val = MS_TO_SERVO(m.content.value);
+		    break;
+
+	    default:
+		    continue;
+		    break;
+	    }
+	    servo_set(&servo1, val);
+    }
+    return NULL;
+}
+#endif
+ 
 #if ENABLE_NRF_COMM
 char rx_handler_stack[THREAD_STACKSIZE_MAIN];
 
@@ -661,6 +722,14 @@ void *nrf24l01p_rx_handler(void *arg)
 		  m.type = WS2812_NEW_RFMSG;
 		  m.content.ptr = (char*)&frame;
 		  msg_send_int(&m, ws2812_pid);
+		}
+#endif
+
+#if ENABLE_SERVO_NOTIF
+		if (servo_pid != KERNEL_PID_UNDEF) {
+		  msg_t m;
+		  m.type = SERVO_RX_MSG;
+		  msg_send_int(&m, servo_pid);
 		}
 #endif
                 break;
@@ -1165,8 +1234,12 @@ int main(void)
   puts("Uber\n");
 
 #if ENABLE_SERVO
-  int r = servo_init(&servo1, SERVO_PWM, 0, MS_TO_SERVO(1000), MS_TO_SERVO(2000));
-  printf("servo init : %d\n", r);
+    if (thread_create(
+        servo_thread_stack, sizeof(servo_thread_stack), THREAD_PRIORITY_MAIN - 1, 0,
+        servo_handler, 0, "servo_handler") < 0) {
+        puts("Error in thread_create");
+        return 1;
+    }
 #else
   printf("servo disable\n");
 #endif
@@ -1216,13 +1289,12 @@ int main(void)
   gpio_init_int(b2, GPIO_IN_PU, GPIO_FALLING, test_cb, &b2_v);
 #else
   printf("board switch disable\n");
-
 #endif
 
 #if ENABLE_ROTARY_BUTTON
-  gpio_t rot_pin = ROTARY_BUTTON_PIN;
-  int rot_but_arg = 1;
-  gpio_init_int(rot_pin, GPIO_IN_PU, GPIO_BOTH, test_cb, &rot_but_arg);
+  const gpio_t rot_pin = ROTARY_BUTTON_PIN;
+  int rot_but_arg = 2;
+  gpio_init_int(rot_pin, GPIO_IN_PU, GPIO_FALLING, test_cb, &rot_but_arg);
 #else
   printf("rotary button disable\n");
 
