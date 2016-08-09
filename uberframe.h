@@ -30,3 +30,4 @@ int uber_dump_frame(radiohead_frame_t *f);
 size_t uber_get_frame_size(radiohead_frame_t *t);
 void uber_get_frame(radiohead_frame_t *f,  char* buf);
 const char* uber_get_name(uint8_t id);
+const char* uber_get_type(uint8_t id);

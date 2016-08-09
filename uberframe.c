@@ -29,6 +29,12 @@ static const char *uber_ids[] = {
 };
 
 
+const char* uber_get_type(uint8_t id){
+  if(id > (sizeof(uber_events)/sizeof(char*)))
+    return "INVALID!";
+  return uber_events[id];
+}
+
 const char* uber_get_name(uint8_t id){
   if(id > (sizeof(uber_ids)/sizeof(char*)))
     return "INVALID!";

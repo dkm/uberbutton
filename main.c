@@ -108,6 +108,13 @@ static unsigned int sender_pid = KERNEL_PID_UNDEF;
 #endif
 
 #if ENABLE_LCD
+
+#define LCD_REFRESH_EVT 0
+#define LCD_LINE1_LINE2_EVT 1
+
+static char lcd_line1[16] = {0};
+static char lcd_line2[16] = {0};
+
 struct lcd_ctx lcd = {
   .rs_pin = GPIO_PIN(PORT_E, 5),
   .enable_pin = GPIO_PIN(PORT_E,4),
@@ -227,9 +234,6 @@ static const shell_command_t shell_commands[] = {
 
 /* unsigned int state = R_START; */
 
-void rotary_cb(void *unused) {
-
-}
 /* unsigned int b1_v = gpio_read(ROTARY_PIN1) ? 1 : 0; */
 /*   unsigned int b2_v = gpio_read(ROTARY_PIN2) ? 1 : 0; */
 
@@ -332,7 +336,9 @@ void print_register(char reg, int num_bytes)
 
 char display_handler_stack[THREAD_STACKSIZE_MAIN];
 
-static char dest_str[256] = {0};
+static char dest_str[4] = {0};
+static char type_str[4] = {0};
+static int type = 1;
 static int dest = 0;
 
 #if ENABLE_NRF_COMM
@@ -374,11 +380,23 @@ void *display_thread(void *arg){
       printf("display_thread got a message\n");
 
 #if ENABLE_LCD
-      const char *name = uber_get_name(dest);
-      lcd1602d_printstr(&lcd, 0, 1, name);
-      int i;
-      for (i=strlen(name); i<10; i++){
-	lcd1602d_printstr(&lcd, i, 1, " ");
+      switch (m.type){
+      case LCD_REFRESH_EVT:
+	{
+	  const char *name = uber_get_name(dest);
+	  lcd1602d_printstr(&lcd, 0, 1, name);
+	  int i;
+	  for (i=strlen(name); i<10; i++){
+	    lcd1602d_printstr(&lcd, i, 1, " ");
+	  }
+	}
+	break;
+      case LCD_LINE1_LINE2_EVT:
+	lcd1602d_printstr(&lcd, 0, 0, lcd_line1);
+	lcd1602d_printstr(&lcd, 0, 1, lcd_line2);
+	break;
+      default:
+	break;
       }
 #endif
     }
@@ -430,7 +448,7 @@ void *ws2812_thread(void *arg){
 #endif
 #endif
     
-  msg_init_queue(msg_q, 50);
+  msg_init_queue(msg_q, 1);
 
   msg_t m;
   int cycle_idx=0;
@@ -558,42 +576,108 @@ void *ws2812_thread(void *arg){
 
 #if ENABLE_ROTARY
 char rotary_thread_stack[THREAD_STACKSIZE_MAIN];
+unsigned int rotary_pid = KERNEL_PID_UNDEF;
 rotary_t rotarydev;
 
 /* RX handler that waits for a message from the ISR */
 void *rotary_thread(void *arg){
+  static char *argv[] = {"", "4", dest_str , "1"};
+  static enum {IDLE, SEL_TGT, SEL_TYPE, SEND} fsm_state;
+  fsm_state = SEL_TGT;
+
   msg_t msg_q[1];
   msg_init_queue(msg_q, 1);
-  unsigned int pid = thread_getpid();
+  rotary_pid = thread_getpid();
 
 #if ENABLE_SERVO_ROTARY
   int dir = 0;
 #endif
 
   puts("Registering rotary_handler thread...");
-  rotary_register(&rotarydev, pid);
+  rotary_register(&rotarydev, rotary_pid);
 
   msg_t m;
 
     while (msg_receive(&m)) {
       puts("rotary Received msg.");
+
       switch (m.type) {
       case ROTARY_EVT:
 	if (m.content.value == DIR_CW){
 	  puts("DIR CW\n");
+	  if (fsm_state == IDLE){
+	    fsm_state = SEL_TGT;
+	  }
+
+	  if(fsm_state == SEL_TGT){
+	    dest = (dest+1)>8?0xFF:dest+1;
+	  } else if (fsm_state == SEL_TYPE){
+	    type = (type+1)>10?10:type+1;
+	  } else {
+	  }
 #if ENABLE_SERVO_ROTARY
 	  dir=1;
 #endif
 	} else {
 	  puts("DIR CCW\n");
+	  if(fsm_state == SEL_TGT){
+	    dest = (dest-1)>0? ((dest-1)<8 ?  dest-1 : 7) : 0;
+	  } else if (fsm_state == SEL_TYPE){
+	    type = (type-1)>0?type-1:0;
+	  } else {
+	  }
+
 #if ENABLE_SERVO_ROTARY
 	  dir=-1;
 #endif
 	}
 	break;
+
+      case ROTARY_CLICK:
+#if ENABLE_NRF_COMM
+	if(fsm_state == SEL_TGT){
+	  printf("dest : %d\n", dest);
+	  fsm_state = SEL_TYPE;
+	  break;
+	} else if (fsm_state == SEL_TYPE){
+	  printf("type : %d\n", type);
+	  fsm_state = SEND;
+	}
+
+	if (sender_pid != KERNEL_PID_UNDEF) {
+	  msg_t m;
+	  sprintf(dest_str, "%d",
+		  dest != 8 ? dest : 0xFF);
+	  dest_str[3] = 0;
+	  sprintf(type_str, "%d",
+		  type != 8 ? type : 0xFF);
+	  type_str[3] = 0;
+
+	  m.type = RCV_PKT_NRF24L01P;
+	  m.content.ptr = (char *)argv;
+	  /* transmit more things here ? */
+	  msg_send_int(&m, sender_pid);
+	}
+	fsm_state = IDLE;
+#endif
       default:
 	break;
       }
+#if ENABLE_LCD
+      if (display_pid != KERNEL_PID_UNDEF){
+	msg_t m;
+	/* memset(lcd_line1, ' ', sizeof(lcd_line1)); */
+	/* memset(lcd_line2, ' ', sizeof(lcd_line2)); */
+
+	sprintf(lcd_line1, "Dest: %s          ", uber_get_name(dest));
+	sprintf(lcd_line2, "Type: %s          ", uber_get_type(type));
+
+	m.type = LCD_LINE1_LINE2_EVT;
+	m.content.ptr = NULL;
+	msg_send_int(&m, display_pid);
+      }
+#endif
+
 #if ENABLE_SERVO_ROTARY
       if(dir){
 	current_pulse += (dir * 10);
@@ -1179,7 +1263,7 @@ void test_cb(void * bid){
     //    lcd1602d_printstr(&lcd, 0, 1, dest_str);
     if (display_pid != KERNEL_PID_UNDEF) {
       msg_t m;
-      m.type = 0;
+      m.type = LCD_REFRESH_EVT;
       m.content.ptr = NULL;
       msg_send_int(&m, display_pid);
     }
@@ -1195,7 +1279,7 @@ void test_cb(void * bid){
   }
 
   sprintf(dest_str, "%d", dest != 8 ? dest : 0xFF);
-  dest_str[9] = 0;
+  dest_str[3] = 0;
 
 #if ENABLE_NRF_COMM
   if (sender_pid != KERNEL_PID_UNDEF) {
@@ -1211,14 +1295,25 @@ void test_cb(void * bid){
   //cmd_send(4, argv);
 }
 
+void rotary_cb(void * bid){
+  if (rotary_pid != KERNEL_PID_UNDEF) {
+    msg_t m;
+    m.type = ROTARY_CLICK;
+    m.content.ptr = NULL;
+    msg_send_int(&m, rotary_pid);
+  }
+}
+
+
 #if ENABLE_RES_LADDER
 static int res_ladder_val(adc_t adc){
   int sample = adc_sample(adc, ADC_RES_10BIT);
   const int max_v = 4095;
   int j;
   int but_state = 0;
-
-  //  printf("%d\n", sample);
+  float v_adc = ((float)sample) * /* 3.09375 */ 3.3 /4095.0;
+  
+  /* printf("adc : [%f]\n", v_adc); */
   
   for (j=1; j<=4; j++){
     //      printf("[%d-%d > %d?", sample, max_v/(1<<j), -(max_v/(1<<(j+2))));
@@ -1296,8 +1391,7 @@ int main(void)
 
 #if ENABLE_ROTARY_BUTTON
   const gpio_t rot_pin = ROTARY_BUTTON_PIN;
-  int rot_but_arg = 2;
-  gpio_init_int(rot_pin, GPIO_IN_PU, GPIO_FALLING, test_cb, &rot_but_arg);
+  gpio_init_int(rot_pin, GPIO_IN_PU, GPIO_FALLING, rotary_cb, NULL);
 #else
   printf("rotary button disable\n");
 
@@ -1428,7 +1522,6 @@ int main(void)
 	     new_button_state & 0x4 ? 1 : 0,
 	     new_button_state & 0x2 ? 1 : 0,
 	     new_button_state & 0x1 ? 1 : 0);
-
       dest = new_button_state & 0x7; // only 3bits
 
       if ((new_button_state & 0x7) != (button_state & 0x7) &&
